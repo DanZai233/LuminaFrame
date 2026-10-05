@@ -1,11 +1,20 @@
 import { CropState, FrameConfig, PhotoMetadata } from '../types';
 
+export interface ColorEnhanceConfig {
+  enabled: boolean;
+  contrast?: number; // e.g. 1.14
+  saturate?: number; // e.g. 1.20
+  brightness?: number; // e.g. 1.02
+  filterString?: string;
+}
+
 interface RenderOptions {
   image: HTMLImageElement;
   cropState: CropState;
   frameConfig: FrameConfig;
   metadata: PhotoMetadata;
   scale?: number; // 1, 2, 3
+  colorEnhance?: ColorEnhanceConfig;
 }
 
 export async function renderFramedPhotoToCanvas({
@@ -14,6 +23,7 @@ export async function renderFramedPhotoToCanvas({
   frameConfig,
   metadata,
   scale = 2,
+  colorEnhance,
 }: RenderOptions): Promise<HTMLCanvasElement> {
   // Wait for web fonts if needed
   try {
@@ -137,6 +147,18 @@ export async function renderFramedPhotoToCanvas({
     ctx.shadowOffsetY = 8 * scale;
   }
 
+  // Apply Cinematic Color & Texture Enhancement if enabled
+  if (colorEnhance?.enabled) {
+    if (colorEnhance.filterString) {
+      ctx.filter = colorEnhance.filterString;
+    } else {
+      const c = colorEnhance.contrast ?? 1.14;
+      const s = colorEnhance.saturate ?? 1.20;
+      const b = colorEnhance.brightness ?? 1.02;
+      ctx.filter = `contrast(${c}) saturate(${s}) brightness(${b})`;
+    }
+  }
+
   // Draw image (with rotation/flip if applicable)
   if (cropState.rotation !== 0 || cropState.flipH) {
     ctx.save();
@@ -152,6 +174,8 @@ export async function renderFramedPhotoToCanvas({
   } else {
     ctx.drawImage(image, sX, sY, sWidth, sHeight, dX, dY, dWidth, dHeight);
   }
+
+  ctx.filter = 'none';
   ctx.restore();
 
   // Draw Inner Border if enabled

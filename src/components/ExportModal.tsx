@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CropState, FrameConfig, PhotoMetadata } from '../types';
 import { renderFramedPhotoToCanvas } from '../utils/canvasRenderer';
-import { X, Download, Copy, Check, Sparkles, Loader2 } from 'lucide-react';
+import { X, Download, Copy, Check, Sparkles, Loader2, Wand2, SlidersHorizontal, Sun } from 'lucide-react';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -11,6 +11,52 @@ interface ExportModalProps {
   frameConfig: FrameConfig;
   metadata: PhotoMetadata;
 }
+
+type EnhancePresetId = 'cinematic' | 'fuji' | 'leica' | 'vintage';
+
+interface EnhancePreset {
+  id: EnhancePresetId;
+  name: string;
+  tagline: string;
+  contrast: number;
+  saturate: number;
+  brightness: number;
+}
+
+const ENHANCE_PRESETS: EnhancePreset[] = [
+  {
+    id: 'cinematic',
+    name: '35mm 电影光影',
+    tagline: '对比度 +14% · 饱和度 +20% · 暗部沉稳有层次',
+    contrast: 1.14,
+    saturate: 1.20,
+    brightness: 1.02,
+  },
+  {
+    id: 'fuji',
+    name: '富士鲜活反转',
+    tagline: '饱和度 +28% · 色彩通透鲜艳 · 风景街头绝配',
+    contrast: 1.10,
+    saturate: 1.28,
+    brightness: 1.03,
+  },
+  {
+    id: 'leica',
+    name: '德系微反差锐化',
+    tagline: '对比度 +22% · 强化阴影微对比与立体雕塑感',
+    contrast: 1.22,
+    saturate: 1.08,
+    brightness: 1.01,
+  },
+  {
+    id: 'vintage',
+    name: '复古暖调胶片',
+    tagline: '暖金微调 · 柔和高光 · 怀旧胶卷印相质感',
+    contrast: 1.08,
+    saturate: 1.14,
+    brightness: 1.03,
+  },
+];
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
@@ -28,11 +74,32 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Color Enhancement state
+  const [colorEnhance, setColorEnhance] = useState<boolean>(true);
+  const [activePreset, setActivePreset] = useState<EnhancePresetId>('cinematic');
+  const [contrast, setContrast] = useState<number>(1.14);
+  const [saturate, setSaturate] = useState<number>(1.20);
+  const [brightness, setBrightness] = useState<number>(1.02);
+  const [showFineTune, setShowFineTune] = useState<boolean>(false);
+
+  const handleSelectPreset = (preset: EnhancePreset) => {
+    setActivePreset(preset.id);
+    setContrast(preset.contrast);
+    setSaturate(preset.saturate);
+    setBrightness(preset.brightness);
+  };
+
   useEffect(() => {
     if (!isOpen || !imageElement) return;
 
     let isCancelled = false;
     setIsRendering(true);
+
+    const filterString = colorEnhance
+      ? activePreset === 'vintage'
+        ? `contrast(${contrast}) saturate(${saturate}) brightness(${brightness}) sepia(0.06)`
+        : `contrast(${contrast}) saturate(${saturate}) brightness(${brightness})`
+      : undefined;
 
     renderFramedPhotoToCanvas({
       image: imageElement,
@@ -40,6 +107,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       frameConfig,
       metadata,
       scale: scaleFactor,
+      colorEnhance: {
+        enabled: colorEnhance,
+        contrast,
+        saturate,
+        brightness,
+        filterString,
+      },
     })
       .then((canvas) => {
         if (isCancelled) return;
@@ -57,7 +131,20 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [isOpen, imageElement, cropState, frameConfig, metadata, scaleFactor, format]);
+  }, [
+    isOpen,
+    imageElement,
+    cropState,
+    frameConfig,
+    metadata,
+    scaleFactor,
+    format,
+    colorEnhance,
+    activePreset,
+    contrast,
+    saturate,
+    brightness,
+  ]);
 
   if (!isOpen) return null;
 
@@ -67,7 +154,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const link = document.createElement('a');
     const safeModel = (metadata.model || 'photo').replace(/\s+/g, '_');
     const safeRatio = cropState.ratioId;
-    link.download = `LuminaFrame_${safeModel}_${safeRatio}_${Date.now()}.${format === 'png' ? 'png' : 'jpg'}`;
+    link.download = `LuminaFrame_${safeModel}_${safeRatio}_${colorEnhance ? 'Enhanced_' : ''}${Date.now()}.${format === 'png' ? 'png' : 'jpg'}`;
     link.href = canvas.toDataURL(format === 'png' ? 'image/png' : 'image/jpeg', 0.95);
     link.click();
   };
@@ -107,6 +194,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <span className="text-xs text-zinc-400 font-mono hidden sm:inline">
               ({exportDimensions.width} × {exportDimensions.height} px)
             </span>
+            {colorEnhance && (
+              <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded font-medium hidden sm:inline-flex items-center gap-1">
+                <Wand2 className="w-2.5 h-2.5" /> 已启用光影增强
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -117,9 +209,132 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Controls Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-zinc-900/80 p-3.5 rounded-xl border border-zinc-800">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* 1. Cinematic Color Enhancement Switch & Filter Panel */}
+          <div className="bg-zinc-900/90 p-4 rounded-xl border border-zinc-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Wand2 className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-bold text-white">电影感光影与色彩质感增强</span>
+                <span className="text-[11px] text-zinc-400 hidden md:inline">
+                  通过对比度、饱和度与微反差让暗部更深邃、光影更具电影张力
+                </span>
+              </div>
+
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={colorEnhance}
+                  onChange={(e) => setColorEnhance(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-400"></div>
+                <span className="ml-2 text-xs font-semibold text-zinc-200">
+                  {colorEnhance ? '已开启' : '关闭增强'}
+                </span>
+              </label>
+            </div>
+
+            {colorEnhance && (
+              <div className="space-y-3 pt-2 border-t border-zinc-800/80 animate-fade-in">
+                {/* 4 Presets */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {ENHANCE_PRESETS.map((p) => {
+                    const isSelected = activePreset === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleSelectPreset(p)}
+                        className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-amber-400 bg-zinc-800 text-white shadow-sm ring-1 ring-amber-400/40'
+                            : 'border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+                        }`}
+                      >
+                        <div className={`text-xs font-bold ${isSelected ? 'text-amber-400' : 'text-zinc-200'}`}>
+                          {p.name}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 mt-1 leading-snug line-clamp-2">
+                          {p.tagline}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Fine-Tuning Toggle and Sliders */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowFineTune((prev) => !prev)}
+                    className="text-[11px] text-amber-400/90 hover:text-amber-300 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    <span>{showFineTune ? '收起微调滑块' : '自定义微调对比度、饱和度与高光'}</span>
+                  </button>
+
+                  {showFineTune && (
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-zinc-950/70 rounded-lg border border-zinc-800 animate-fade-in">
+                      {/* Contrast Slider */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                          <span>对比度 (Contrast)</span>
+                          <span className="font-mono text-zinc-200">{Math.round(contrast * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1.0"
+                          max="1.35"
+                          step="0.02"
+                          value={contrast}
+                          onChange={(e) => setContrast(parseFloat(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg appearance-none"
+                        />
+                      </div>
+
+                      {/* Saturation Slider */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                          <span>色彩饱和度 (Saturation)</span>
+                          <span className="font-mono text-zinc-200">{Math.round(saturate * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="1.0"
+                          max="1.45"
+                          step="0.02"
+                          value={saturate}
+                          onChange={(e) => setSaturate(parseFloat(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg appearance-none"
+                        />
+                      </div>
+
+                      {/* Brightness Slider */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                          <span>通透亮度 (Brightness)</span>
+                          <span className="font-mono text-zinc-200">{Math.round(brightness * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.95"
+                          max="1.1"
+                          step="0.01"
+                          value={brightness}
+                          onChange={(e) => setBrightness(parseFloat(e.target.value))}
+                          className="w-full accent-amber-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg appearance-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 2. Controls Bar: Resolution & Format */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 bg-zinc-900/80 p-3.5 rounded-xl border border-zinc-800">
             {/* Resolution Selector */}
             <div className="space-y-1.5">
               <label className="text-xs text-zinc-300 font-medium flex items-center gap-1.5">
@@ -177,18 +392,18 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
           </div>
 
-          {/* Render Preview Frame */}
-          <div className="relative min-h-[260px] sm:min-h-[360px] flex items-center justify-center bg-black/60 rounded-xl border border-zinc-800 p-4 overflow-hidden">
+          {/* 3. Render Preview Frame */}
+          <div className="relative min-h-[260px] sm:min-h-[340px] flex items-center justify-center bg-black/60 rounded-xl border border-zinc-800 p-4 overflow-hidden">
             {isRendering ? (
               <div className="flex flex-col items-center gap-2 text-zinc-400">
                 <Loader2 className="w-7 h-7 text-amber-400 animate-spin" />
-                <span className="text-xs">正在以高精度矢量引擎渲染相框...</span>
+                <span className="text-xs">正在渲染相框与光影增强效果...</span>
               </div>
             ) : previewUrl ? (
               <img
                 src={previewUrl}
                 alt="Rendered result"
-                className="max-h-[55vh] max-w-full object-contain rounded shadow-2xl"
+                className="max-h-[50vh] max-w-full object-contain rounded shadow-2xl"
               />
             ) : null}
           </div>
@@ -203,6 +418,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </span>
             <span className="text-zinc-600">·</span>
             <span className="uppercase text-amber-400 font-mono text-[11px]">{format}</span>
+            {colorEnhance && (
+              <>
+                <span className="text-zinc-600">·</span>
+                <span className="text-amber-400 text-[11px] font-medium">电影感增强</span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -229,3 +450,4 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     </div>
   );
 };
+
