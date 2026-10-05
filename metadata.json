@@ -1,0 +1,6 @@
+{
+  "name": "光影相框 | Lumina Frame & EXIF Studio",
+  "description": "专业照片画幅裁切与EXIF光影相框生成器，支持哈苏XPan 65:24宽幅裁切、自动提取相机元数据与底片胶卷边框定制导出。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
