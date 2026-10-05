@@ -80,6 +80,38 @@ export interface WatermarkConfig {
   letterSpacing: 'tight' | 'normal' | 'wide' | 'widest';
 }
 
+export type FilmPresetId =
+  | 'none'
+  | 'kodak-portra'
+  | 'fuji-classic-chrome'
+  | 'fuji-velvia'
+  | 'leica-monochrome'
+  | 'kodak-tri-x'
+  | 'cinestill-800t'
+  | 'ilford-hp5'
+  | 'kodak-gold';
+
+export interface FilmPresetOption {
+  id: FilmPresetId;
+  name: string;
+  brand: 'Kodak' | 'Fujifilm' | 'Leica' | 'CineStill' | 'Ilford' | 'Original';
+  tagline: string;
+  category: 'color' | 'bw' | 'cinema';
+  badgeColor: string;
+  contrast: number;
+  saturate: number;
+  brightness: number;
+  sepia: number;
+  grayscale: number;
+  hueRotate: number;
+}
+
+export interface FilmFilterConfig {
+  presetId: FilmPresetId;
+  strength: number; // 0 to 100
+  grain: number; // 0 to 100
+}
+
 export interface FrameConfig {
   styleId: FrameStyleId;
   frameColor: string;

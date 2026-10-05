@@ -1,11 +1,11 @@
 import React from 'react';
-import { Upload, Download, Sparkles, SlidersHorizontal, Image as ImageIcon } from 'lucide-react';
+import { Upload, Download, Sparkles, SlidersHorizontal, Image as ImageIcon, Clapperboard } from 'lucide-react';
 
 interface HeaderProps {
   onUploadClick: () => void;
   onExportClick: () => void;
-  activeTab: 'crop' | 'frame' | 'exif';
-  setActiveTab: (tab: 'crop' | 'frame' | 'exif') => void;
+  activeTab: 'crop' | 'film' | 'frame' | 'exif';
+  setActiveTab: (tab: 'crop' | 'film' | 'frame' | 'exif') => void;
   currentRatioLabel: string;
 }
 
@@ -44,6 +44,17 @@ export const Header: React.FC<HeaderProps> = ({
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span>画幅裁切</span>
             <span className="text-[10px] text-zinc-500 font-mono hidden sm:inline">({currentRatioLabel})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('film')}
+            className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'film'
+                ? 'bg-zinc-800 text-amber-400 shadow-sm font-semibold'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Clapperboard className="w-3.5 h-3.5" />
+            <span>胶片预设</span>
           </button>
           <button
             onClick={() => setActiveTab('frame')}

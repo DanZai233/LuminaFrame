@@ -1,4 +1,5 @@
-import { CropState, FrameConfig, PhotoMetadata } from '../types';
+import { CropState, FrameConfig, PhotoMetadata, FilmFilterConfig } from '../types';
+import { computeFilmFilterCss } from './filmPresets';
 
 export interface ColorEnhanceConfig {
   enabled: boolean;
@@ -15,6 +16,7 @@ interface RenderOptions {
   metadata: PhotoMetadata;
   scale?: number; // 1, 2, 3
   colorEnhance?: ColorEnhanceConfig;
+  filmConfig?: FilmFilterConfig;
 }
 
 export async function renderFramedPhotoToCanvas({
@@ -24,6 +26,7 @@ export async function renderFramedPhotoToCanvas({
   metadata,
   scale = 2,
   colorEnhance,
+  filmConfig,
 }: RenderOptions): Promise<HTMLCanvasElement> {
   // Wait for web fonts if needed
   try {
@@ -147,16 +150,25 @@ export async function renderFramedPhotoToCanvas({
     ctx.shadowOffsetY = 8 * scale;
   }
 
-  // Apply Cinematic Color & Texture Enhancement if enabled
+  // Combine Film Preset Filter & Cinematic Color Enhancement
+  const filterParts: string[] = [];
+  const filmFilterCss = computeFilmFilterCss(filmConfig);
+  if (filmFilterCss && filmFilterCss !== 'none') {
+    filterParts.push(filmFilterCss);
+  }
   if (colorEnhance?.enabled) {
     if (colorEnhance.filterString) {
-      ctx.filter = colorEnhance.filterString;
+      filterParts.push(colorEnhance.filterString);
     } else {
       const c = colorEnhance.contrast ?? 1.14;
       const s = colorEnhance.saturate ?? 1.20;
       const b = colorEnhance.brightness ?? 1.02;
-      ctx.filter = `contrast(${c}) saturate(${s}) brightness(${b})`;
+      filterParts.push(`contrast(${c}) saturate(${s}) brightness(${b})`);
     }
+  }
+
+  if (filterParts.length > 0) {
+    ctx.filter = filterParts.join(' ');
   }
 
   // Draw image (with rotation/flip if applicable)
@@ -176,6 +188,12 @@ export async function renderFramedPhotoToCanvas({
   }
 
   ctx.filter = 'none';
+
+  // Apply Film Grain to photo if enabled
+  if (filmConfig?.grain && filmConfig.grain > 0) {
+    drawFilmGrain(ctx, dX, dY, dWidth, dHeight, filmConfig.grain);
+  }
+
   ctx.restore();
 
   // Draw Inner Border if enabled
@@ -492,4 +510,46 @@ function drawWatermarkSignature(
   }
 
   ctx.restore();
+}
+
+function drawFilmGrain(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  intensity: number
+) {
+  try {
+    const grainCanvas = document.createElement('canvas');
+    const gw = 120;
+    const gh = 120;
+    grainCanvas.width = gw;
+    grainCanvas.height = gh;
+    const gctx = grainCanvas.getContext('2d');
+    if (!gctx) return;
+
+    const idata = gctx.createImageData(gw, gh);
+    const data = idata.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = Math.floor(Math.random() * 255);
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
+    }
+    gctx.putImageData(idata, 0, 0);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = Math.min(0.35, (intensity / 100) * 0.28);
+    const pattern = ctx.createPattern(grainCanvas, 'repeat');
+    if (pattern) {
+      ctx.fillStyle = pattern;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.restore();
+  } catch (err) {
+    console.warn('Grain rendering skipped', err);
+  }
 }

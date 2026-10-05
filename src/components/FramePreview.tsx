@@ -11,6 +11,8 @@ interface FramePreviewProps {
   showGrid: boolean;
   onUpdateOffset: (offsetX: number, offsetY: number) => void;
   onImageLoaded?: (img: HTMLImageElement) => void;
+  filmFilterCss?: string;
+  filmGrain?: number;
 }
 
 export const FramePreview: React.FC<FramePreviewProps> = ({
@@ -21,6 +23,8 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   showGrid,
   onUpdateOffset,
   onImageLoaded,
+  filmFilterCss,
+  filmGrain = 0,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -128,6 +132,33 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const translateX = -cropState.offsetX * 1.5;
   const translateY = -cropState.offsetY * 1.5;
 
+  // Calculate individual padding values to avoid shorthand/non-shorthand conflict
+  const padTop =
+    frameConfig.paddingSize === 'none'
+      ? '0px'
+      : frameConfig.paddingSize === 'compact'
+      ? '16px'
+      : frameConfig.paddingSize === 'generous'
+      ? '40px'
+      : '24px';
+
+  const padSide = padTop;
+
+  const padBottom =
+    frameConfig.paddingSize === 'none' && !frameConfig.showMetadata && !frameConfig.watermark?.enabled
+      ? '0px'
+      : isPolaroid
+      ? '72px'
+      : isXPanStyle
+      ? frameConfig.watermark?.enabled
+        ? '46px'
+        : '36px'
+      : frameConfig.showMetadata || frameConfig.watermark?.enabled
+      ? frameConfig.paddingSize === 'generous'
+        ? '64px'
+        : '48px'
+      : padTop;
+
   return (
     <div className="relative w-full flex items-center justify-center p-3 sm:p-6 lg:p-8 bg-[#07080a] min-h-[380px] sm:min-h-[500px] rounded-2xl border border-zinc-800/80 shadow-2xl overflow-hidden select-none">
       {/* Background Studio Light Falloff */}
@@ -139,24 +170,10 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         className="relative max-w-full transition-all duration-200 ease-out shadow-2xl"
         style={{
           backgroundColor: frameConfig.frameColor,
-          padding:
-            frameConfig.paddingSize === 'none'
-              ? '0px'
-              : frameConfig.paddingSize === 'compact'
-              ? '16px'
-              : frameConfig.paddingSize === 'generous'
-              ? '40px'
-              : '24px',
-          paddingBottom:
-            isPolaroid
-              ? '72px'
-              : isXPanStyle
-              ? (frameConfig.watermark?.enabled ? '46px' : '36px')
-              : (frameConfig.showMetadata || frameConfig.watermark?.enabled)
-              ? frameConfig.paddingSize === 'generous'
-                ? '64px'
-                : '48px'
-              : undefined,
+          paddingTop: padTop,
+          paddingRight: padSide,
+          paddingBottom: padBottom,
+          paddingLeft: padSide,
           borderRadius: `${frameConfig.borderRadius}px`,
         }}
       >
@@ -216,8 +233,20 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
               transform: `scale(${scale}) translate(${translateX}%, ${translateY}%) rotate(${cropState.rotation}deg) scaleX(${
                 cropState.flipH ? -1 : 1
               })`,
+              filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
             }}
           />
+
+          {/* Film Grain Texture Overlay */}
+          {filmGrain !== undefined && filmGrain > 0 && (
+            <div
+              className="absolute inset-0 pointer-events-none mix-blend-overlay z-5"
+              style={{
+                opacity: (filmGrain / 100) * 0.42,
+                backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+              }}
+            />
+          )}
 
           {/* Rule of Thirds Grid Overlay (Shows on drag or toggle) */}
           {(showGrid || isDragging) && (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CropState, FrameConfig, PhotoMetadata } from '../types';
+import { CropState, FrameConfig, PhotoMetadata, FilmFilterConfig } from '../types';
 import { renderFramedPhotoToCanvas } from '../utils/canvasRenderer';
 import { X, Download, Copy, Check, Sparkles, Loader2, Wand2, SlidersHorizontal, Sun } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface ExportModalProps {
   cropState: CropState;
   frameConfig: FrameConfig;
   metadata: PhotoMetadata;
+  filmConfig?: FilmFilterConfig;
 }
 
 type EnhancePresetId = 'cinematic' | 'fuji' | 'leica' | 'vintage';
@@ -65,6 +66,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   cropState,
   frameConfig,
   metadata,
+  filmConfig,
 }) => {
   const [scaleFactor, setScaleFactor] = useState<number>(2);
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
@@ -114,6 +116,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         brightness,
         filterString,
       },
+      filmConfig,
     })
       .then((canvas) => {
         if (isCancelled) return;
@@ -144,6 +147,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     contrast,
     saturate,
     brightness,
+    filmConfig,
   ]);
 
   if (!isOpen) return null;

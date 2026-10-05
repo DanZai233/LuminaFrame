@@ -11,24 +11,33 @@ import { CropControls } from './components/CropControls';
 import { MetadataEditor } from './components/MetadataEditor';
 import { FrameStylePicker } from './components/FrameStylePicker';
 import { WatermarkEditor } from './components/WatermarkEditor';
+import { FilmPresetSelector } from './components/FilmPresetSelector';
 import { ExportModal } from './components/ExportModal';
 import { SAMPLE_PHOTOS, SamplePhoto } from './utils/sampleData';
 import { ASPECT_RATIOS } from './utils/aspectRatios';
 import { parsePhotoExif } from './utils/exifParser';
 import { extractColorPalette } from './utils/colorPalette';
-import { AspectRatioOption, CropState, FrameConfig, PhotoMetadata } from './types';
-import { Upload, Film, Sparkles, SlidersHorizontal, Image as ImageIcon, Camera, Check } from 'lucide-react';
+import { computeFilmFilterCss } from './utils/filmPresets';
+import { AspectRatioOption, CropState, FrameConfig, PhotoMetadata, FilmFilterConfig } from './types';
+import { Upload, Film, Sparkles, SlidersHorizontal, Image as ImageIcon, Camera, Check, Clapperboard } from 'lucide-react';
 
 export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadedImageRef = useRef<HTMLImageElement | null>(null);
 
-  // Active workspace tab: 'crop' | 'frame' | 'exif'
-  const [activeTab, setActiveTab] = useState<'crop' | 'frame' | 'exif'>('crop');
+  // Active workspace tab: 'crop' | 'film' | 'frame' | 'exif'
+  const [activeTab, setActiveTab] = useState<'crop' | 'film' | 'frame' | 'exif'>('crop');
 
   // Active image source
   const [imageSrc, setImageSrc] = useState<string>(SAMPLE_PHOTOS[0].url);
   const [currentSampleId, setCurrentSampleId] = useState<string>(SAMPLE_PHOTOS[0].id);
+
+  // Film Filter Simulation State
+  const [filmConfig, setFilmConfig] = useState<FilmFilterConfig>({
+    presetId: 'none',
+    strength: 85,
+    grain: 15,
+  });
 
   // Photo Metadata
   const [metadata, setMetadata] = useState<PhotoMetadata>(SAMPLE_PHOTOS[0].metadata);
@@ -259,6 +268,8 @@ export default function App() {
               setCropState((prev) => ({ ...prev, offsetX, offsetY }));
             }}
             onImageLoaded={handleImageLoaded}
+            filmFilterCss={computeFilmFilterCss(filmConfig)}
+            filmGrain={filmConfig.grain}
           />
         </section>
 
@@ -294,6 +305,31 @@ export default function App() {
                 currentRatioId={cropState.ratioId}
                 onSelectRatio={handleSelectRatio}
                 originalDimensions={originalDimensions}
+              />
+            </div>
+          )}
+
+          {activeTab === 'film' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Clapperboard className="w-4 h-4 text-amber-400" />
+                    <span>经典胶卷模拟滤镜 (Film Simulation)</span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    精选 Kodak Portra 暖调人像、Fujifilm 经典正片与反转、Leica 黑白高反差颗粒及 CineStill 电影色调
+                  </p>
+                </div>
+              </div>
+
+              <FilmPresetSelector
+                filmConfig={filmConfig}
+                onChangeFilmConfig={setFilmConfig}
+                onSyncToMetadata={(filmName) => {
+                  setMetadata((prev) => ({ ...prev, filmSimulation: filmName }));
+                  showToast(`已将底片模拟「${filmName}」同步至 EXIF 标签`);
+                }}
               />
             </div>
           )}
@@ -408,6 +444,7 @@ export default function App() {
         cropState={cropState}
         frameConfig={frameConfig}
         metadata={metadata}
+        filmConfig={filmConfig}
       />
     </div>
   );
