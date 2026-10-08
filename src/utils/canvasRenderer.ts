@@ -1,5 +1,6 @@
 import { CropState, FrameConfig, PhotoMetadata, FilmFilterConfig } from '../types';
 import { computeFilmFilterCss } from './filmPresets';
+import { rotationCoverScale } from './rotation';
 
 export interface ColorEnhanceConfig {
   enabled: boolean;
@@ -174,9 +175,20 @@ export async function renderFramedPhotoToCanvas({
   // Draw image (with rotation/flip if applicable)
   if (cropState.rotation !== 0 || cropState.flipH) {
     ctx.save();
+    // A turned photo no longer fills its cell on its own: clip to the cell so it
+    // can never bleed over the frame, and scale it up by the smallest factor
+    // that keeps the cell covered by photo instead of empty corners. This is the
+    // same factor the live preview applies, so both stay identical.
+    ctx.beginPath();
+    ctx.rect(dX, dY, dWidth, dHeight);
+    ctx.clip();
     ctx.translate(dX + dWidth / 2, dY + dHeight / 2);
     if (cropState.rotation !== 0) {
       ctx.rotate((cropState.rotation * Math.PI) / 180);
+      const cover = rotationCoverScale(cropState.rotation, dWidth / dHeight);
+      if (cover > 1) {
+        ctx.scale(cover, cover);
+      }
     }
     if (cropState.flipH) {
       ctx.scale(-1, 1);

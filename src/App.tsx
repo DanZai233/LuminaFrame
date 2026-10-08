@@ -19,6 +19,7 @@ import { parsePhotoExif } from './utils/exifParser';
 import { extractColorPalette } from './utils/colorPalette';
 import { computeFilmFilterCss } from './utils/filmPresets';
 import { FILM_PRESETS } from './utils/filmPresets';
+import { clampTilt, rotationTilt, withRotationTilt } from './utils/rotation';
 import { AspectRatioOption, CropState, FrameConfig, PhotoMetadata, FilmFilterConfig } from './types';
 import {
   Upload,
@@ -148,7 +149,7 @@ export default function App() {
   }, []);
 
   // Keyboard shortcuts: 1-4 switch panels, G toggles the composition grid,
-  // Escape closes the export dialog.
+  // [ / ] tilt the photo by 0.5 degrees, Escape closes the export dialog.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -160,6 +161,12 @@ export default function App() {
         setActiveTab(WORKSPACE_TABS[Number(e.key) - 1].id);
       } else if (e.key.toLowerCase() === 'g') {
         setShowGrid((prev) => !prev);
+      } else if (e.key === '[' || e.key === ']') {
+        const step = e.key === '[' ? -0.5 : 0.5;
+        setCropState((prev) => ({
+          ...prev,
+          rotation: withRotationTilt(prev.rotation, clampTilt(rotationTilt(prev.rotation) + step)),
+        }));
       } else if (e.key === 'Escape') {
         setIsExportOpen(false);
       }

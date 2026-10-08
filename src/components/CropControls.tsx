@@ -11,7 +11,14 @@ import {
   ArrowLeftRight,
   ArrowUpDown,
   Move,
+  Gauge,
 } from 'lucide-react';
+import { clampTilt, normalizeAngle, rotationTilt, TILT_LIMIT, withRotationTilt } from '../utils/rotation';
+
+/** Tilt slider handle icon (a dial-ish glyph). */
+const AngleIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <Gauge className={`h-3 w-3 shrink-0 ${className ?? ''}`} />
+);
 
 interface CropControlsProps {
   cropState: CropState;
@@ -51,6 +58,9 @@ export const CropControls: React.FC<CropControlsProps> = ({
       offsetX: axis === 'x' ? Math.max(-50, Math.min(50, prev.offsetX + delta)) : prev.offsetX,
       offsetY: axis === 'y' ? Math.max(-50, Math.min(50, prev.offsetY + delta)) : prev.offsetY,
     }));
+
+  /** Distance from the nearest right angle, so the slider always reads "tilt". */
+  const tilt = clampTilt(rotationTilt(cropState.rotation));
 
   const nudgeButton =
     'flex h-8 flex-1 items-center justify-center rounded-md border border-zinc-800 bg-zinc-950/70 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer';
@@ -155,7 +165,12 @@ export const CropControls: React.FC<CropControlsProps> = ({
       </Group>
 
       {/* Rotation & mirror */}
-      <Group title="旋转与镜像" hint={`${cropState.rotation}°${cropState.flipH ? ' · 已镜像' : ''}`}>
+      <Group
+        title="旋转与镜像"
+        hint={`${Math.round(normalizeAngle(cropState.rotation) * 10) / 10}°${
+          cropState.flipH ? ' · 已镜像' : ''
+        }`}
+      >
         <div className="grid grid-cols-3 gap-1.5">
           <button
             type="button"
@@ -187,6 +202,40 @@ export const CropControls: React.FC<CropControlsProps> = ({
           >
             <FlipHorizontal className="h-3.5 w-3.5" />
             镜像
+          </button>
+        </div>
+
+        {/* Fine tilt, for straightening a crooked horizon */}
+        <div className="flex items-center gap-2 pt-1">
+          <AngleIcon className={tilt !== 0 ? 'text-amber-400' : 'text-zinc-500'} />
+          <input
+            type="range"
+            min={-TILT_LIMIT}
+            max={TILT_LIMIT}
+            step={0.1}
+            value={tilt}
+            onChange={(e) =>
+              onChangeCrop((prev) => ({
+                ...prev,
+                rotation: withRotationTilt(prev.rotation, parseFloat(e.target.value)),
+              }))
+            }
+            className="h-1.5 flex-1 cursor-pointer appearance-none rounded-lg bg-zinc-800 accent-amber-400"
+            title={`微调旋转角度（±${TILT_LIMIT}°），用来校正倾斜的地平线`}
+            aria-label="倾斜角度"
+          />
+          <button
+            type="button"
+            onClick={() => onChangeCrop((prev) => ({ ...prev, rotation: withRotationTilt(prev.rotation, 0) }))}
+            disabled={tilt === 0}
+            className={`w-14 shrink-0 rounded-md border px-1 py-0.5 text-right font-mono text-[10px] tabular-nums transition-colors ${
+              tilt !== 0
+                ? 'border-amber-400/40 bg-amber-400/10 text-amber-300 cursor-pointer hover:border-amber-400/70'
+                : 'border-transparent text-zinc-600'
+            }`}
+            title="点击将倾斜角归零"
+          >
+            {`${tilt > 0 ? '+' : ''}${tilt.toFixed(1)}°`}
           </button>
         </div>
       </Group>

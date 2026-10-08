@@ -4,6 +4,7 @@ import { CropState, FrameConfig, PhotoMetadata } from '../types';
 import { BrandLogo } from '../utils/brandLogos';
 import { ColorPaletteBar } from './ColorPaletteBar';
 import { ASPECT_RATIOS } from '../utils/aspectRatios';
+import { rotationCoverScale } from '../utils/rotation';
 
 /**
  * `crop`   – the whole photo plus a draggable crop window (nothing is hidden).
@@ -216,6 +217,9 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const maxWinW = baseSrcW * fitScale;
   const minWinW = maxWinW / MAX_ZOOM;
 
+  // how much a non-right-angle rotation magnifies the photo to keep the cell full
+  const rotationCover = rotationCoverScale(cropState.rotation, targetRatio);
+
   const isInteracting = isDragging || resizeHandle !== null;
 
   const ratioOption = ASPECT_RATIOS.find((r) => r.id === cropState.ratioId);
@@ -241,7 +245,12 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
     backgroundPosition: `${imgW > srcW ? (srcX / (imgW - srcW)) * 100 : 0}% ${
       imgH > srcH ? (srcY / (imgH - srcH)) * 100 : 0
     }%`,
-    transform: `rotate(${cropState.rotation}deg) scaleX(${cropState.flipH ? -1 : 1})`,
+    // Mirrors `canvasRenderer`: turn the layer, then blow it up by the exact
+    // factor that hides the empty corners a rotation would otherwise expose.
+    transform: `rotate(${cropState.rotation}deg) scale(${rotationCoverScale(
+      cropState.rotation,
+      outputAspect
+    )}) scaleX(${cropState.flipH ? -1 : 1})`,
     filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
   };
 
@@ -653,17 +662,32 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
               maxWidth: `calc(var(--preview-max-h, 66vh) * ${stageAspect})`,
             }}
           >
-            <img
-              src={imageSrc}
-              alt={metadata.model ? `${metadata.make} ${metadata.model} preview` : 'Preview'}
-              draggable={false}
-              className={`absolute inset-0 h-full w-full max-w-none object-contain transition-opacity duration-150 ${
-                imageStatus === 'ready' ? 'opacity-100' : 'opacity-0'
-              }`}
-              style={{
-                filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
-              }}
-            />
+            {/* The photo itself. When tilted, the whole picture turns around the
+                crop window's centre, scaled by the same factor the window's
+                inner layer uses, so the two meet seamlessly at the window edge
+                instead of showing a kink there. */}
+            <div className="pointer-events-none absolute inset-0 overflow-hidden">
+              <img
+                src={imageSrc}
+                alt={metadata.model ? `${metadata.make} ${metadata.model} preview` : 'Preview'}
+                draggable={false}
+                className={`absolute inset-0 h-full w-full max-w-none object-contain transition-opacity duration-150 ${
+                  imageStatus === 'ready' ? 'opacity-100' : 'opacity-0'
+                }`}
+                style={{
+                  filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
+                  transform:
+                    cropRect && rotationCover > 1.001
+                      ? `rotate(${cropState.rotation}deg) scale(${rotationCover})`
+                      : undefined,
+                  transformOrigin: cropRect
+                    ? `${cropRect.left + cropRect.width / 2}px ${
+                        cropRect.top + cropRect.height / 2
+                      }px`
+                    : 'center',
+                }}
+              />
+            </div>
 
             {/* Film Grain Texture Overlay */}
             {filmGrain !== undefined && filmGrain > 0 && (
@@ -847,6 +871,9 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
             </span>
             <span className="hidden sm:inline">
               取景 {Math.round(srcW)} × {Math.round(srcH)} px · {activeZoom.toFixed(2)}x
+              {rotationCover > 1.001 && (
+                <span className="text-amber-400/90"> · 倾斜补正 {rotationCover.toFixed(2)}x</span>
+              )}
             </span>
           </div>
         </div>
