@@ -35,6 +35,8 @@ import {
   Palette,
   Scan,
   Layers,
+  Crop,
+  Frame as FrameIcon,
 } from 'lucide-react';
 
 const WORKSPACE_TABS: { id: WorkspaceTab; label: string; icon: React.ReactNode; hint: string }[] = [
@@ -50,6 +52,18 @@ export default function App() {
 
   // Active workspace panel
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('crop');
+
+  // Preview mode. `null` follows the active tab: the crop tab needs the whole
+  // photo plus the crop window, every other tab needs the finished frame. A
+  // manual pick is dropped as soon as the tab changes so the preview keeps
+  // matching the panel you are editing.
+  const [previewModeOverride, setPreviewModeOverride] = useState<'crop' | 'result' | null>(null);
+  const previewMode: 'crop' | 'result' =
+    previewModeOverride ?? (activeTab === 'crop' ? 'crop' : 'result');
+
+  useEffect(() => {
+    setPreviewModeOverride(null);
+  }, [activeTab]);
 
   // Active image source
   const [imageSrc, setImageSrc] = useState<string>(SAMPLE_PHOTOS[0].url);
@@ -366,7 +380,10 @@ export default function App() {
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.95fr)] xl:grid-cols-[minmax(0,1.45fr)_minmax(400px,1fr)]">
           {/* ── Left: Preview Stage ───────────────────────────── */}
           <section className="min-w-0 lg:sticky lg:top-[4.5rem] lg:self-start">
-            <div className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#07080a] shadow-2xl shadow-black/50">
+            <div
+              data-preview-stage
+              className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-[#07080a] shadow-2xl shadow-black/50"
+            >
               {/* Stage status bar */}
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/70 px-3 py-2">
                 <div className="flex items-center gap-2 text-[11px]">
@@ -381,6 +398,34 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-2 text-[11px]">
+                  <div className="flex items-center rounded-md border border-zinc-700/60 bg-zinc-900/80 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewModeOverride('crop')}
+                      title="显示整张照片与可拖动的取景框"
+                      className={`flex items-center gap-1 rounded px-2 py-0.5 transition-colors cursor-pointer ${
+                        previewMode === 'crop'
+                          ? 'bg-amber-400/15 text-amber-300'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <Crop className="h-3 w-3" />
+                      裁切取景
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewModeOverride('result')}
+                      title="显示与导出结果一致的成品相框"
+                      className={`flex items-center gap-1 rounded px-2 py-0.5 transition-colors cursor-pointer ${
+                        previewMode === 'result'
+                          ? 'bg-amber-400/15 text-amber-300'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      <FrameIcon className="h-3 w-3" />
+                      成品预览
+                    </button>
+                  </div>
                   {activeFilmPreset && activeFilmPreset.id !== 'none' && (
                     <span
                       className="hidden items-center gap-1 rounded-md px-2 py-0.5 font-medium sm:flex"
@@ -425,6 +470,7 @@ export default function App() {
                     onImageLoaded={handleImageLoaded}
                     filmFilterCss={computeFilmFilterCss(filmConfig)}
                     filmGrain={filmConfig.grain}
+                    mode={previewMode}
                   />
                 </div>
               </div>

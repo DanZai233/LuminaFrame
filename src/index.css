@@ -27,3 +27,56 @@
 .animate-fade-in {
   animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/*
+ * The frame's padding and typography are authored in absolute pixels for the
+ * exported image. On a phone the preview stage is only ~300–420px wide, so
+ * keeping 24px of side padding there would eat a third of the width. The two
+ * custom properties below scale the preview's frame geometry down with the
+ * stage width, so the frame keeps the same proportions it has on desktop.
+ * They are never used by the canvas export renderer, which resolves its own
+ * absolute values.
+ */
+[data-preview-stage] {
+  container-type: inline-size;
+  --frame-pad-scale: clamp(0.45, calc(100cqw / 420px), 1);
+  --frame-text-scale: clamp(0.78, calc(100cqw / 360px), 1);
+}
+
+/*
+ * The frame's printed copy (metadata rows, watermark) is authored for the
+ * exported image, where those sizes are correct. In the on-screen preview the
+ * same absolute sizes look oversized once the stage drops below ~420px, so the
+ * whole printed block is scaled with the stage width. `data-frame-copy` is only
+ * set by FramePreview; the canvas exporter never sees it.
+ */
+[data-frame-copy] {
+  --copy-scale: var(--frame-text-scale, 1);
+}
+[data-frame-copy] .text-xs {
+  font-size: calc(0.75rem * var(--copy-scale));
+}
+[data-frame-copy] .text-sm {
+  font-size: calc(0.875rem * var(--copy-scale));
+}
+[data-frame-copy] .text-\[10px\] {
+  font-size: calc(10px * var(--copy-scale));
+}
+[data-frame-copy] .text-\[11px\] {
+  font-size: calc(11px * var(--copy-scale));
+}
+
+/*
+ * The XPan edge stamp (`HASSELBLAD XPAN · 24×65mm PANORAMA` / `EXP 24A · 400`)
+ * is one line on the exported film strip. In a narrow preview the two halves no
+ * longer fit side by side, so they are tightened and shrunk locally instead of
+ * wrapping to two lines. Only the preview is affected.
+ */
+@container (max-width: 430px) {
+  [data-xpan-stamp] {
+    font-size: calc(9px * var(--frame-text-scale, 1));
+    letter-spacing: 0.04em;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}

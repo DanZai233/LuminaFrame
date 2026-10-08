@@ -1,8 +1,15 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ImageOff } from 'lucide-react';
+import { ImageOff, Move } from 'lucide-react';
 import { CropState, FrameConfig, PhotoMetadata } from '../types';
 import { BrandLogo } from '../utils/brandLogos';
 import { ColorPaletteBar } from './ColorPaletteBar';
+import { ASPECT_RATIOS } from '../utils/aspectRatios';
+
+/**
+ * `crop`   – the whole photo plus a draggable crop window (nothing is hidden).
+ * `result` – the finished frame, i.e. what `canvasRenderer` will export.
+ */
+export type PreviewMode = 'crop' | 'result';
 
 interface FramePreviewProps {
   imageSrc: string;
@@ -14,6 +21,7 @@ interface FramePreviewProps {
   onImageLoaded?: (img: HTMLImageElement) => void;
   filmFilterCss?: string;
   filmGrain?: number;
+  mode?: PreviewMode;
 }
 
 export const FramePreview: React.FC<FramePreviewProps> = ({
@@ -26,11 +34,13 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   onImageLoaded,
   filmFilterCss,
   filmGrain = 0,
+  mode = 'crop',
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
+  const photoContainerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [stageSize, setStageSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const dragStartRef = useRef<{ startX: number; startY: number; initialOffsetX: number; initialOffsetY: number }>({
     startX: 0,
     startY: 0,
@@ -40,27 +50,107 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
 
   const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
 
-  // Reset the loading state whenever the underlying photo changes so the
-  // skeleton is shown again instead of a stale frame.
+  // Load the photo through a detached `Image()` instead of the visible <img>:
+  // the element only exists in cropping mode, so a tab switch mid-load would
+  // otherwise leave the geometry (and the exported bitmap) stuck at 1×1.
   useEffect(() => {
+    let cancelled = false;
     setImageStatus('loading');
-  }, [imageSrc]);
-
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setImgNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
-    setImageStatus('ready');
-    if (onImageLoaded) {
-      onImageLoaded(img);
-    }
-  };
-
-  const handleImageError = () => {
-    setImageStatus('error');
-  };
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      if (cancelled) return;
+      setImgNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+      setImageStatus('ready');
+      if (onImageLoaded) {
+        onImageLoaded(img);
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) setImageStatus('error');
+    };
+    img.src = imageSrc;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSrc, onImageLoaded]);
 
   // Determine active aspect ratio
   const targetRatio = cropState.ratioValue > 0 ? cropState.ratioValue : imgNaturalSize.width / imgNaturalSize.height;
+
+  // --- Crop geometry -------------------------------------------------------
+  // Deliberately mirrors the source-rect maths in `src/utils/canvasRenderer.ts`
+  // so the window drawn on screen is exactly the region that gets exported.
+  const activeZoom = Math.max(1, cropState.zoom);
+  const imgW = imgNaturalSize.width;
+  const imgH = imgNaturalSize.height;
+  const imgRatio = imgW / imgH;
+
+  let srcW = imgW;
+  let srcH = imgH;
+  if (imgRatio > targetRatio) {
+    srcW = imgH * targetRatio;
+    srcH = imgH;
+  } else {
+    srcW = imgW;
+    srcH = imgW / targetRatio;
+  }
+  srcW /= activeZoom;
+  srcH /= activeZoom;
+
+  const maxOffsetX = (imgW - srcW) / 2;
+  const maxOffsetY = (imgH - srcH) / 2;
+  const srcX = Math.max(0, Math.min(imgW - srcW, maxOffsetX * (1 + cropState.offsetX / 50)));
+  const srcY = Math.max(0, Math.min(imgH - srcH, maxOffsetY * (1 + cropState.offsetY / 50)));
+
+  // `object-contain` box of the photo inside the stage.
+  const fitScale =
+    stageSize.width > 0 && stageSize.height > 0 ? Math.min(stageSize.width / imgW, stageSize.height / imgH) : 0;
+  const photoW = imgW * fitScale;
+  const photoH = imgH * fitScale;
+  const photoX = (stageSize.width - photoW) / 2;
+  const photoY = (stageSize.height - photoH) / 2;
+
+  const cropRect =
+    fitScale > 0 && imageStatus === 'ready'
+      ? {
+          left: photoX + (srcX / imgW) * photoW,
+          top: photoY + (srcY / imgH) * photoH,
+          width: (srcW / imgW) * photoW,
+          height: (srcH / imgH) * photoH,
+        }
+      : null;
+
+  // On-screen travel of the window as the offset sweeps 0 -> ±50.
+  const maxOffsetScreenX = (photoW * (1 - srcW / imgW)) / 2;
+  const maxOffsetScreenY = (photoH * (1 - srcH / imgH)) / 2;
+
+  const ratioOption = ASPECT_RATIOS.find((r) => r.id === cropState.ratioId);
+  const ratioLabel = ratioOption?.label ?? `${targetRatio.toFixed(2)}:1`;
+  const showRotatedOutput = cropState.rotation !== 0 || cropState.flipH;
+
+  // Photo box keeps the photo's own shape while it loads, then the frame's
+  // shape, so the skeleton never collapses to a square.
+  const stageAspect = imageStatus === 'ready' && imgW > 1 ? imgW / imgH : targetRatio;
+  const outputAspect = targetRatio;
+
+  /**
+   * The exported pixels, rendered purely with CSS background maths so it works
+   * at any size without measuring the box. Percentage `background-size` is
+   * relative to the element, so `imgW / srcW` maps the source rect exactly onto
+   * the slot; `background-position` is then scaled by the leftover room
+   * (`imgW - srcW`), which is why the window offset is a plain ratio.
+   */
+  const croppedBackdropStyle: React.CSSProperties = {
+    backgroundImage: `url("${imageSrc}")`,
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: `${(imgW / srcW) * 100}% ${(imgH / srcH) * 100}%`,
+    backgroundPosition: `${imgW > srcW ? (srcX / (imgW - srcW)) * 100 : 0}% ${
+      imgH > srcH ? (srcY / (imgH - srcH)) * 100 : 0
+    }%`,
+    transform: `rotate(${cropState.rotation}deg) scaleX(${cropState.flipH ? -1 : 1})`,
+    filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
+  };
 
   // Handle Dragging
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -85,17 +175,42 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
     }
   };
 
+  // Track the rendered size of the photo stage so the crop window can be
+  // positioned in real pixels instead of guessed percentages.
   useEffect(() => {
-    // Translate viewport pixels into offset percent relative to the crop
-    // window, so a drag feels the same on a phone and on a 4K monitor.
+    const el = photoContainerRef.current;
+    if (!el) return;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setStageSize((prev) =>
+        Math.abs(prev.width - rect.width) < 0.5 && Math.abs(prev.height - rect.height) < 0.5
+          ? prev
+          : { width: rect.width, height: rect.height }
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [mode]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    // Dragging moves the crop window itself, so the window tracks the cursor.
+    // `maxOffsetScreen*` is how far the window can travel on screen, which maps
+    // linearly onto the ±50 offset range the exporter expects.
     const offsetFromDelta = (clientX: number, clientY: number) => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      const width = rect?.width || 800;
-      const height = rect?.height || 600;
       const dx = clientX - dragStartRef.current.startX;
       const dy = clientY - dragStartRef.current.startY;
-      const nextX = dragStartRef.current.initialOffsetX - (dx / width) * 100 * cropState.zoom;
-      const nextY = dragStartRef.current.initialOffsetY - (dy / height) * 100 * cropState.zoom;
+      const nextX =
+        maxOffsetScreenX > 1
+          ? dragStartRef.current.initialOffsetX + (dx / maxOffsetScreenX) * 50
+          : dragStartRef.current.initialOffsetX;
+      const nextY =
+        maxOffsetScreenY > 1
+          ? dragStartRef.current.initialOffsetY + (dy / maxOffsetScreenY) * 50
+          : dragStartRef.current.initialOffsetY;
       return {
         x: Math.max(-50, Math.min(50, nextX)),
         y: Math.max(-50, Math.min(50, nextY)),
@@ -103,13 +218,12 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
       const next = offsetFromDelta(e.clientX, e.clientY);
       onUpdateOffset(next.x, next.y);
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (!isDragging || e.touches.length !== 1) return;
+      if (e.touches.length !== 1) return;
       const next = offsetFromDelta(e.touches[0].clientX, e.touches[0].clientY);
       onUpdateOffset(next.x, next.y);
     };
@@ -118,12 +232,10 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
       setIsDragging(false);
     };
 
-    if (isDragging) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      window.addEventListener('touchmove', handleTouchMove, { passive: true });
-      window.addEventListener('touchend', handleMouseUp);
-    }
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleMouseUp);
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
@@ -131,7 +243,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleMouseUp);
     };
-  }, [isDragging, onUpdateOffset, cropState.zoom]);
+  }, [isDragging, onUpdateOffset, maxOffsetScreenX, maxOffsetScreenY]);
 
   const isLight =
     frameConfig.frameColor === '#ffffff' ||
@@ -143,38 +255,39 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const isXPanStyle = frameConfig.styleId === 'xpan-film';
   const isPolaroid = frameConfig.styleId === 'polaroid-vintage';
 
-  // Calculate object position and scale
-  // With zoom and offset:
-  const scale = cropState.zoom;
-  const translateX = -cropState.offsetX * 1.5;
-  const translateY = -cropState.offsetY * 1.5;
-
-  // Calculate individual padding values to avoid shorthand/non-shorthand conflict
-  const padTop =
+  // Calculate individual padding values to avoid shorthand/non-shorthand conflict.
+  // Values are exposed as CSS custom properties so the frame keeps its
+  // proportions when the preview gets narrow (see `--frame-pad-scale`, set from
+  // a media query in index.css); the export renderer uses its own absolute
+  // geometry and is unaffected.
+  const padTopValue =
     frameConfig.paddingSize === 'none'
-      ? '0px'
+      ? 0
       : frameConfig.paddingSize === 'compact'
-      ? '16px'
+      ? 16
       : frameConfig.paddingSize === 'generous'
-      ? '40px'
-      : '24px';
+      ? 40
+      : 24;
 
-  const padSide = padTop;
-
-  const padBottom =
+  const padBottomValue =
     frameConfig.paddingSize === 'none' && !frameConfig.showMetadata && !frameConfig.watermark?.enabled
-      ? '0px'
+      ? 0
       : isPolaroid
-      ? '72px'
+      ? 72
       : isXPanStyle
       ? frameConfig.watermark?.enabled
-        ? '46px'
-        : '36px'
+        ? 46
+        : 36
       : frameConfig.showMetadata || frameConfig.watermark?.enabled
       ? frameConfig.paddingSize === 'generous'
-        ? '64px'
-        : '48px'
-      : padTop;
+        ? 64
+        : 48
+      : padTopValue;
+
+  const s = 'var(--frame-pad-scale, 1)';
+  const padTop = `calc(${padTopValue}px * ${s})`;
+  const padSide = padTop;
+  const padBottom = `calc(${padBottomValue}px * ${s})`;
 
   return (
     <div className="flex w-full min-w-0 items-center justify-center overflow-hidden py-1 select-none">
@@ -187,23 +300,23 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         ref={containerRef}
         className="relative w-full min-w-0 max-w-full transition-[padding,border-radius] duration-200 ease-out shadow-2xl shadow-black/60"
         style={{
-          backgroundColor: frameConfig.frameColor,
-          paddingTop: padTop,
-          paddingRight: padSide,
-          paddingBottom: padBottom,
-          paddingLeft: padSide,
-          borderRadius: `${frameConfig.borderRadius}px`,
+          backgroundColor: mode === 'result' ? frameConfig.frameColor : '#09090b',
+          paddingTop: mode === 'result' ? padTop : 0,
+          paddingRight: mode === 'result' ? padSide : 0,
+          paddingBottom: mode === 'result' ? padBottom : 0,
+          paddingLeft: mode === 'result' ? padSide : 0,
+          borderRadius: `${mode === 'result' ? frameConfig.borderRadius : 14}px`,
         }}
       >
         {/* Top XPan Film Sprockets Row */}
-        {isXPanStyle && (
+        {mode === 'result' && isXPanStyle && (
           <div className="mb-2 w-full flex items-center justify-between overflow-hidden px-1">
             {/* Sprockets simulation */}
-            <div className="flex items-center gap-3 opacity-90 overflow-hidden w-full justify-between">
+            <div className="flex w-full items-center justify-between gap-1.5 overflow-hidden opacity-90">
               {Array.from({ length: 18 }).map((_, i) => (
                 <div
                   key={`top-hole-${i}`}
-                  className="w-3 h-4 bg-zinc-950 rounded-[2px] border border-zinc-900 shrink-0"
+                  className="h-4 w-3 max-w-3 min-w-0 flex-1 rounded-[2px] border border-zinc-900 bg-zinc-950"
                 />
               ))}
             </div>
@@ -211,111 +324,268 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         )}
 
         {/* XPan Top Film Stamp */}
-        {isXPanStyle && (
-          <div className="flex items-center justify-between text-[10px] text-amber-500/90 font-mono tracking-widest px-2 mb-1.5 font-semibold">
+        {mode === 'result' && isXPanStyle && (
+          <div
+            data-xpan-stamp
+            className="flex items-center justify-between text-[10px] text-amber-500/90 font-mono tracking-widest px-2 mb-1.5 font-semibold"
+          >
             <span>HASSELBLAD XPAN · 24×65mm PANORAMA</span>
             <span>EXP 24A · 400</span>
           </div>
         )}
 
-        {/* Image Cropping Window */}
-        <div
-          onMouseDown={handleMouseDown}
-          onTouchStart={handleTouchStart}
-          className={`relative overflow-hidden cursor-grab active:cursor-grabbing ${
-            frameConfig.showDropShadow && frameConfig.paddingSize !== 'none' && !isXPanStyle
-              ? 'shadow-md shadow-black/25'
-              : ''
-          } ${
-            frameConfig.showInnerBorder && !isXPanStyle
-              ? isLight
-                ? 'ring-1 ring-black/10'
-                : 'ring-1 ring-white/15'
-              : ''
-          }`}
-          style={{
-            aspectRatio: `${targetRatio}`,
-            maxHeight: 'var(--preview-max-h, 60vh)',
-            maxWidth: '100%',
-          }}
-        >
-          {/* Cropped Image */}
-          <img
-            ref={imageRef}
-            src={imageSrc}
-            alt={metadata.model ? `${metadata.make} ${metadata.model} preview` : 'Preview'}
-            onLoad={handleImageLoad}
-            onError={handleImageError}
-            draggable={false}
-            className={`absolute inset-0 h-full w-full max-w-none object-cover transition-transform duration-75 pointer-events-none ${
-              imageStatus === 'ready' ? 'opacity-100' : 'opacity-0'
-            }`}
-            style={{
-              transform: `scale(${scale}) translate(${translateX}%, ${translateY}%) rotate(${cropState.rotation}deg) scaleX(${
-                cropState.flipH ? -1 : 1
-              })`,
-              filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
-            }}
-          />
-
-          {/* Loading Skeleton */}
-          {imageStatus === 'loading' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900">
-              <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-amber-400 animate-spin" />
-              <span className="text-[11px] text-zinc-500 font-mono">正在载入照片…</span>
-            </div>
-          )}
-
-          {/* Image Load Failure */}
-          {imageStatus === 'error' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900 px-6 text-center">
-              <ImageOff className="w-6 h-6 text-rose-400" />
-              <span className="text-xs text-zinc-300 font-medium">照片载入失败</span>
-              <span className="text-[11px] text-zinc-500 max-w-xs leading-relaxed">
-                请确认图片链接可访问，或点击顶部「上传照片」改用本地文件。
-              </span>
-            </div>
-          )}
-          {/* Film Grain Texture Overlay */}
-          {filmGrain !== undefined && filmGrain > 0 && (
+        {mode === 'result' ? (
+          /*
+            Finished frame. The photo slot has the *exported* shape and shows the
+            cropped source rect via `croppedBackdropStyle`, so padding, film
+            perforations, metadata and watermark sit exactly where the canvas
+            renderer will put them.
+          */
+          <div className="relative mx-auto w-full min-w-0">
             <div
-              className="absolute inset-0 pointer-events-none mix-blend-overlay z-5"
+              data-photo-stage
+              className={`relative w-full overflow-hidden bg-zinc-950 ${
+                frameConfig.showInnerBorder && !isXPanStyle
+                  ? isLight
+                    ? 'ring-1 ring-inset ring-black/15'
+                    : 'ring-1 ring-inset ring-white/20'
+                  : ''
+              }`}
               style={{
-                opacity: (filmGrain / 100) * 0.42,
-                backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+                aspectRatio: `${outputAspect}`,
+                maxHeight: 'var(--preview-max-h, 60vh)',
+                maxWidth: `calc(var(--preview-max-h, 60vh) * ${outputAspect})`,
               }}
-            />
-          )}
+            >
+              <div className="absolute inset-0" style={croppedBackdropStyle} />
 
-          {/* Rule of Thirds Grid Overlay (Shows on drag or toggle) */}
-          {(showGrid || isDragging) && (
-            <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3 z-10 transition-opacity duration-150">
-              <div className="border-r border-b border-white/30" />
-              <div className="border-r border-b border-white/30" />
-              <div className="border-b border-white/30" />
-              <div className="border-r border-b border-white/30" />
-              <div className="border-r border-b border-white/30" />
-              <div className="border-b border-white/30" />
-              <div className="border-r border-white/30" />
-              <div className="border-r border-white/30" />
-              <div />
-              {isDragging && (
-                <div className="absolute bottom-2 right-2 bg-black/75 backdrop-blur-xs text-white text-[10px] px-2 py-0.5 rounded font-mono">
-                  拖拽中 · X: {Math.round(cropState.offsetX)}% Y: {Math.round(cropState.offsetY)}%
+              {/* Film Grain Texture Overlay */}
+              {filmGrain !== undefined && filmGrain > 0 && (
+                <div
+                  className="pointer-events-none absolute inset-0 z-5 mix-blend-overlay"
+                  style={{
+                    opacity: (filmGrain / 100) * 0.42,
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+                  }}
+                />
+              )}
+
+              {/* Rule of thirds inside the photo slot */}
+              {showGrid && (
+                <div className="pointer-events-none absolute inset-0 z-10 grid grid-cols-3 grid-rows-3">
+                  <div className="border-b border-r border-white/25" />
+                  <div className="border-b border-r border-white/25" />
+                  <div className="border-b border-white/25" />
+                  <div className="border-b border-r border-white/25" />
+                  <div className="border-b border-r border-white/25" />
+                  <div className="border-b border-white/25" />
+                  <div className="border-r border-white/25" />
+                  <div className="border-r border-white/25" />
+                  <div />
+                </div>
+              )}
+
+              {/* Loading Skeleton */}
+              {imageStatus === 'loading' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-amber-400" />
+                  <span className="font-mono text-[11px] text-zinc-500">正在载入照片…</span>
+                </div>
+              )}
+
+              {imageStatus === 'error' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900 px-6 text-center">
+                  <ImageOff className="h-6 w-6 text-rose-400" />
+                  <span className="text-xs font-medium text-zinc-300">照片载入失败</span>
+                  <span className="max-w-xs text-[11px] leading-relaxed text-zinc-500">
+                    请确认图片链接可访问，或点击顶部「上传照片」改用本地文件。
+                  </span>
                 </div>
               )}
             </div>
-          )}
+          </div>
+        ) : (
+          /*
+            Cropping mode: the photo is never clipped. The full frame is visible
+            so you can always tell where the crop window sits inside it, and
+            everything outside the window is dimmed by the scrim panes below
+            instead of being hidden.
+          */
+        <div
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleTouchStart}
+          className="stage relative w-full min-w-0 touch-none cursor-grab select-none active:cursor-grabbing"
+        >
+          <div
+            ref={photoContainerRef}
+            data-photo-stage
+            className="relative mx-auto w-full overflow-hidden bg-zinc-950"
+            style={{
+              aspectRatio: `${stageAspect}`,
+              maxHeight: 'var(--preview-max-h, 66vh)',
+              maxWidth: `calc(var(--preview-max-h, 66vh) * ${stageAspect})`,
+            }}
+          >
+            <img
+              src={imageSrc}
+              alt={metadata.model ? `${metadata.make} ${metadata.model} preview` : 'Preview'}
+              draggable={false}
+              className={`absolute inset-0 h-full w-full max-w-none object-contain transition-opacity duration-150 ${
+                imageStatus === 'ready' ? 'opacity-100' : 'opacity-0'
+              }`}
+              style={{
+                filter: filmFilterCss && filmFilterCss !== 'none' ? filmFilterCss : undefined,
+              }}
+            />
+
+            {/* Film Grain Texture Overlay */}
+            {filmGrain !== undefined && filmGrain > 0 && (
+              <div
+                className="pointer-events-none absolute inset-0 z-5 mix-blend-overlay"
+                style={{
+                  opacity: (filmGrain / 100) * 0.42,
+                  backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`,
+                }}
+              />
+            )}
+
+            {/* Dimming scrim: the four panes around the crop window */}
+            {imageStatus === 'ready' &&
+              cropRect &&
+              [
+                { left: 0, top: 0, width: '100%', height: `${cropRect.top}px` },
+                {
+                  left: 0,
+                  top: `${cropRect.top}px`,
+                  width: `${cropRect.left}px`,
+                  height: `${cropRect.height}px`,
+                },
+                {
+                  left: `${cropRect.left + cropRect.width}px`,
+                  top: `${cropRect.top}px`,
+                  width: `${Math.max(0, stageSize.width - cropRect.left - cropRect.width)}px`,
+                  height: `${cropRect.height}px`,
+                },
+                {
+                  left: 0,
+                  top: `${cropRect.top + cropRect.height}px`,
+                  width: '100%',
+                  height: `${Math.max(0, stageSize.height - cropRect.top - cropRect.height)}px`,
+                },
+              ].map((pane, i) => (
+                <div key={`scrim-${i}`} className="pointer-events-none absolute bg-black/50" style={pane} />
+              ))}
+
+            {/* The crop window itself */}
+            {imageStatus === 'ready' && cropRect && (
+              <div
+                data-crop-window
+                className="pointer-events-none absolute z-10 overflow-hidden border-solid"
+                style={{
+                  left: `${cropRect.left}px`,
+                  top: `${cropRect.top}px`,
+                  width: `${cropRect.width}px`,
+                  height: `${cropRect.height}px`,
+                  borderColor: isDragging ? 'rgb(252 211 77)' : 'rgba(244,244,245,0.9)',
+                  borderWidth: isDragging ? '2px' : '1.5px',
+                  boxShadow: isDragging
+                    ? '0 0 0 1px rgba(0,0,0,0.5), 0 0 26px rgba(252,211,77,0.35)'
+                    : '0 0 0 1px rgba(0,0,0,0.45)',
+                }}
+              >
+                {/*
+                  Rotation / mirror are applied to the exported pixels, not to the
+                  photo on screen, so when either is active the window renders the
+                  transformed result on top of the untouched photo. The background
+                  maths is the CSS equivalent of the exporter's `drawImage` call.
+                */}
+                {showRotatedOutput && cropRect.width > 2 && (
+                  <div className="absolute inset-0" style={croppedBackdropStyle} />
+                )}
+
+                {/* Corner brackets */}
+                <span className="absolute left-0 top-0 h-3 w-3 border-l-2 border-t-2 border-amber-400" />
+                <span className="absolute right-0 top-0 h-3 w-3 border-r-2 border-t-2 border-amber-400" />
+                <span className="absolute bottom-0 left-0 h-3 w-3 border-b-2 border-l-2 border-amber-400" />
+                <span className="absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-amber-400" />
+
+                {/* Inner border preview (matches the exporter's optional inner ring) */}
+                {frameConfig.showInnerBorder && !isXPanStyle && (
+                  <span
+                    className={`pointer-events-none absolute inset-0 ring-1 ring-inset ${
+                      isLight ? 'ring-black/15' : 'ring-white/20'
+                    }`}
+                  />
+                )}
+
+                {/* Rule of thirds inside the window */}
+                {(showGrid || isDragging) && (
+                  <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3">
+                    <div className="border-b border-r border-white/30" />
+                    <div className="border-b border-r border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-b border-r border-white/30" />
+                    <div className="border-b border-r border-white/30" />
+                    <div className="border-b border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div className="border-r border-white/30" />
+                    <div />
+                  </div>
+                )}
+
+                <span className="absolute left-1 top-1 rounded-sm bg-amber-400 px-1.5 py-px font-mono text-[9px] font-bold text-zinc-950">
+                  {ratioLabel}
+                </span>
+
+                {isDragging && (
+                  <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                    拖动中 · X {Math.round(cropState.offsetX)}% · Y {Math.round(cropState.offsetY)}%
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Loading Skeleton */}
+            {imageStatus === 'loading' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-zinc-700 border-t-amber-400" />
+                <span className="font-mono text-[11px] text-zinc-500">正在载入照片…</span>
+              </div>
+            )}
+
+            {/* Image Load Failure */}
+            {imageStatus === 'error' && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900 px-6 text-center">
+                <ImageOff className="h-6 w-6 text-rose-400" />
+                <span className="text-xs font-medium text-zinc-300">照片载入失败</span>
+                <span className="max-w-xs text-[11px] leading-relaxed text-zinc-500">
+                  请确认图片链接可访问，或点击顶部「上传照片」改用本地文件。
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Hint under the stage */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 font-mono text-[10px] text-zinc-500">
+            <span className="flex items-center gap-1.5">
+              <Move className="h-3 w-3 text-amber-400/80" />
+              拖动可移动取景框 · 框外保留原图便于定位，只有框内区域会被导出
+            </span>
+            <span className="hidden sm:inline">
+              取景 {Math.round(srcW)} × {Math.round(srcH)} px · {activeZoom.toFixed(2)}x
+            </span>
+          </div>
         </div>
+        )}
 
         {/* Bottom XPan Film Sprockets Row */}
-        {isXPanStyle && (
+        {mode === 'result' && isXPanStyle && (
           <div className="mt-2.5 w-full flex items-center justify-between overflow-hidden px-1">
-            <div className="flex items-center gap-3 opacity-90 overflow-hidden w-full justify-between">
+            <div className="flex w-full items-center justify-between gap-1.5 overflow-hidden opacity-90">
               {Array.from({ length: 18 }).map((_, i) => (
                 <div
                   key={`bot-hole-${i}`}
-                  className="w-3 h-4 bg-zinc-950 rounded-[2px] border border-zinc-900 shrink-0"
+                  className="h-4 w-3 max-w-3 min-w-0 flex-1 rounded-[2px] border border-zinc-900 bg-zinc-950"
                 />
               ))}
             </div>
@@ -323,8 +593,9 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         )}
 
         {/* Frame Bottom Metadata Section */}
-        {frameConfig.showMetadata && (
+        {mode === 'result' && frameConfig.showMetadata && (
           <div
+            data-frame-copy
             className={`w-full mt-3 px-1 transition-colors ${
               isXPanStyle
                 ? 'text-zinc-200'
@@ -432,8 +703,9 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         )}
 
         {/* Customizable Photographer Watermark Signature */}
-        {frameConfig.watermark?.enabled && frameConfig.watermark?.text && (
+        {mode === 'result' && frameConfig.watermark?.enabled && frameConfig.watermark?.text && (
           <div
+            data-frame-copy
             className={`w-full ${frameConfig.showMetadata ? 'mt-2' : 'mt-3'} px-1 flex ${
               frameConfig.watermark.position === 'left'
                 ? 'justify-start text-left'
