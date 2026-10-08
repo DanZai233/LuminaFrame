@@ -467,6 +467,9 @@ export default function App() {
                     onUpdateOffset={(offsetX, offsetY) => {
                       setCropState((prev) => ({ ...prev, offsetX, offsetY }));
                     }}
+                    onUpdateCrop={(next) => {
+                      setCropState((prev) => ({ ...prev, ...next }));
+                    }}
                     onImageLoaded={handleImageLoaded}
                     filmFilterCss={computeFilmFilterCss(filmConfig)}
                     filmGrain={filmConfig.grain}

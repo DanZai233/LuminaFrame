@@ -11,6 +11,63 @@ import { ASPECT_RATIOS } from '../utils/aspectRatios';
  */
 export type PreviewMode = 'crop' | 'result';
 
+/** Zoom bounds, kept in step with the zoom slider in `src/App.tsx`. */
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 2.5;
+
+type ResizeHandleId = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+
+/** Same order as the visual affordances: corners, then edge midpoints. */
+const RESIZE_HANDLES: { id: ResizeHandleId; cursor: string }[] = [
+  { id: 'nw', cursor: 'cursor-nwse-resize' },
+  { id: 'n', cursor: 'cursor-ns-resize' },
+  { id: 'ne', cursor: 'cursor-nesw-resize' },
+  { id: 'e', cursor: 'cursor-ew-resize' },
+  { id: 'se', cursor: 'cursor-nwse-resize' },
+  { id: 's', cursor: 'cursor-ns-resize' },
+  { id: 'sw', cursor: 'cursor-nesw-resize' },
+  { id: 'w', cursor: 'cursor-ew-resize' },
+];
+
+const CORNER_IDS: ResizeHandleId[] = ['nw', 'ne', 'se', 'sw'];
+
+/** Keeps the little grab dot just inside the window corner, so it is never clipped. */
+const CORNER_DOT_STYLE: Record<string, React.CSSProperties> = {
+  nw: { left: 4, top: 4 },
+  ne: { right: 4, top: 4 },
+  se: { right: 4, bottom: 4 },
+  sw: { left: 4, bottom: 4 },
+};
+
+/**
+ * Hit box for one resize grip, in the window's coordinate space. Everything is
+ * anchored *inside* the window: the window always sits inside the photo, so the
+ * grips stay fully hit-testable even when the window is flush with the photo
+ * edge (which is the default for XPan at 1x).
+ */
+const handleHitStyle = (id: ResizeHandleId): React.CSSProperties => {
+  const C = 22; // corner hit box side
+  const T = 14; // edge strip thickness
+  switch (id) {
+    case 'nw':
+      return { left: 0, top: 0, width: C, height: C };
+    case 'n':
+      return { left: C, right: C, top: 0, height: T };
+    case 'ne':
+      return { right: 0, top: 0, width: C, height: C };
+    case 'e':
+      return { right: 0, top: C, bottom: C, width: T };
+    case 'se':
+      return { right: 0, bottom: 0, width: C, height: C };
+    case 's':
+      return { left: C, right: C, bottom: 0, height: T };
+    case 'sw':
+      return { left: 0, bottom: 0, width: C, height: C };
+    default:
+      return { left: 0, top: C, bottom: C, width: T };
+  }
+};
+
 interface FramePreviewProps {
   imageSrc: string;
   cropState: CropState;
@@ -18,6 +75,8 @@ interface FramePreviewProps {
   metadata: PhotoMetadata;
   showGrid: boolean;
   onUpdateOffset: (offsetX: number, offsetY: number) => void;
+  /** Resizing a grip changes the zoom and both offsets at once. */
+  onUpdateCrop: (next: { zoom: number; offsetX: number; offsetY: number }) => void;
   onImageLoaded?: (img: HTMLImageElement) => void;
   filmFilterCss?: string;
   filmGrain?: number;
@@ -31,6 +90,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   metadata,
   showGrid,
   onUpdateOffset,
+  onUpdateCrop,
   onImageLoaded,
   filmFilterCss,
   filmGrain = 0,
@@ -39,6 +99,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const photoContainerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [resizeHandle, setResizeHandle] = useState<ResizeHandleId | null>(null);
   const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [stageSize, setStageSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const dragStartRef = useRef<{ startX: number; startY: number; initialOffsetX: number; initialOffsetY: number }>({
@@ -47,6 +108,30 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
     initialOffsetX: 0,
     initialOffsetY: 0,
   });
+
+  /**
+   * Everything the grip maths needs, frozen when the drag starts: the grips are
+   * anchored to the window as it was, so the opposite edge stays put even while
+   * the state updates underneath.
+   */
+  const resizeStartRef = useRef<{
+    handle: ResizeHandleId;
+    rect: { left: number; top: number; width: number; height: number };
+    /** The stage's client origin, to convert pointer coordinates into `rect` space. */
+    originX: number;
+    originY: number;
+    fitScale: number;
+    photoX: number;
+    photoY: number;
+    photoW: number;
+    photoH: number;
+    maxWinW: number;
+    minWinW: number;
+    baseSrcW: number;
+    imgW: number;
+    imgH: number;
+    ratio: number;
+  } | null>(null);
 
   const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
 
@@ -125,6 +210,14 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const maxOffsetScreenX = (photoW * (1 - srcW / imgW)) / 2;
   const maxOffsetScreenY = (photoH * (1 - srcH / imgH)) / 2;
 
+  // The window at zoom 1: the largest crop the current ratio allows. Every grip
+  // resize is expressed against it, because `zoom = baseSrcW / srcW`.
+  const baseSrcW = srcW * activeZoom;
+  const maxWinW = baseSrcW * fitScale;
+  const minWinW = maxWinW / MAX_ZOOM;
+
+  const isInteracting = isDragging || resizeHandle !== null;
+
   const ratioOption = ASPECT_RATIOS.find((r) => r.id === cropState.ratioId);
   const ratioLabel = ratioOption?.label ?? `${targetRatio.toFixed(2)}:1`;
   const showRotatedOutput = cropState.rotation !== 0 || cropState.flipH;
@@ -173,6 +266,110 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
         initialOffsetY: cropState.offsetY,
       };
     }
+  };
+
+  /**
+   * Freeze the geometry a grip drag starts from. `stopPropagation` matters: the
+   * grips live inside the stage whose own handler would otherwise begin a move.
+   */
+  const beginResize = (e: React.MouseEvent | React.TouchEvent, handle: ResizeHandleId) => {
+    if (!cropRect || fitScale <= 0) return;
+    const stageRect = photoContainerRef.current?.getBoundingClientRect();
+    if (!stageRect) return;
+    e.stopPropagation();
+    resizeStartRef.current = {
+      handle,
+      rect: { ...cropRect },
+      originX: stageRect.left,
+      originY: stageRect.top,
+      fitScale,
+      photoX,
+      photoY,
+      photoW,
+      photoH,
+      maxWinW,
+      minWinW,
+      baseSrcW,
+      imgW,
+      imgH,
+      ratio: targetRatio,
+    };
+    setResizeHandle(handle);
+  };
+
+  /**
+   * Turn a pointer position into a new crop window: the edge or corner opposite
+   * the grip stays anchored, the ratio stays locked, and the result is converted
+   * back into the (zoom, offsetX, offsetY) triple the exporter consumes.
+   */
+  const cropFromResize = (clientX: number, clientY: number) => {
+    const s = resizeStartRef.current;
+    if (!s) return null;
+    const { rect, originX, originY, photoX, photoY, photoW, photoH, fitScale, maxWinW, minWinW, baseSrcW, imgW, imgH, ratio } = s;
+    // The frozen rect lives in the stage's own coordinate space, so move the
+    // pointer into that space before measuring anything against it.
+    const pointX = clientX - originX;
+    const pointY = clientY - originY;
+    const photoRight = photoX + photoW;
+    const photoBottom = photoY + photoH;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    const westGrip = s.handle.includes('w');
+    const eastGrip = s.handle.includes('e');
+    const northGrip = s.handle.includes('n');
+    const southGrip = s.handle.includes('s');
+
+    const anchorX = westGrip ? rect.left + rect.width : rect.left;
+    const anchorY = northGrip ? rect.top + rect.height : rect.top;
+
+    const rawW = Math.abs(pointX - anchorX);
+    const rawH = Math.abs(pointY - anchorY);
+    const wantedW =
+      westGrip || eastGrip ? (northGrip || southGrip ? Math.max(rawW, rawH * ratio) : rawW) : rawH * ratio;
+
+    // How much room the anchored edge leaves inside the photo.
+    let roomW: number;
+    if (westGrip) roomW = anchorX - photoX;
+    else if (eastGrip) roomW = photoRight - anchorX;
+    else roomW = 2 * Math.min(cx - photoX, photoRight - cx);
+
+    let roomH: number;
+    if (northGrip) roomH = anchorY - photoY;
+    else if (southGrip) roomH = photoBottom - anchorY;
+    else roomH = 2 * Math.min(cy - photoY, photoBottom - cy);
+
+    const winW = Math.max(minWinW, Math.min(wantedW, maxWinW, roomW, roomH * ratio));
+
+    // The window is the visible half of the pair; zoom is the source half.
+    const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, baseSrcW / (winW / fitScale)));
+    const finalWinW = (baseSrcW / zoom) * fitScale;
+    const finalWinH = finalWinW / ratio;
+
+    let left: number;
+    if (westGrip) left = anchorX - finalWinW;
+    else if (eastGrip) left = anchorX;
+    else left = cx - finalWinW / 2;
+
+    let top: number;
+    if (northGrip) top = anchorY - finalWinH;
+    else if (southGrip) top = anchorY;
+    else top = cy - finalWinH / 2;
+
+    left = Math.max(photoX, Math.min(photoRight - finalWinW, left));
+    top = Math.max(photoY, Math.min(photoBottom - finalWinH, top));
+
+    const newSrcW = finalWinW / fitScale;
+    const newSrcH = finalWinH / fitScale;
+    const srcLeft = (left - photoX) / fitScale;
+    const srcTop = (top - photoY) / fitScale;
+    const roomOffsetX = (imgW - newSrcW) / 2;
+    const roomOffsetY = (imgH - newSrcH) / 2;
+
+    const offsetX = roomOffsetX > 0.5 ? Math.max(-50, Math.min(50, 50 * (srcLeft / roomOffsetX - 1))) : 0;
+    const offsetY = roomOffsetY > 0.5 ? Math.max(-50, Math.min(50, 50 * (srcTop / roomOffsetY - 1))) : 0;
+
+    return { zoom, offsetX, offsetY };
   };
 
   // Track the rendered size of the photo stage so the crop window can be
@@ -244,6 +441,36 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
       window.removeEventListener('touchend', handleMouseUp);
     };
   }, [isDragging, onUpdateOffset, maxOffsetScreenX, maxOffsetScreenY]);
+
+  useEffect(() => {
+    if (!resizeHandle) return;
+
+    const apply = (clientX: number, clientY: number) => {
+      const next = cropFromResize(clientX, clientY);
+      if (next) onUpdateCrop(next);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => apply(e.clientX, e.clientY);
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      apply(e.touches[0].clientX, e.touches[0].clientY);
+    };
+
+    const handleUp = () => setResizeHandle(null);
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleUp);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('touchend', handleUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleUp);
+    };
+  }, [resizeHandle, onUpdateCrop]);
 
   const isLight =
     frameConfig.frameColor === '#ffffff' ||
@@ -419,7 +646,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
           <div
             ref={photoContainerRef}
             data-photo-stage
-            className="relative mx-auto w-full overflow-hidden bg-zinc-950"
+            className="relative mx-auto w-full bg-zinc-950"
             style={{
               aspectRatio: `${stageAspect}`,
               maxHeight: 'var(--preview-max-h, 66vh)',
@@ -450,31 +677,33 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
             )}
 
             {/* Dimming scrim: the four panes around the crop window */}
-            {imageStatus === 'ready' &&
-              cropRect &&
-              [
-                { left: 0, top: 0, width: '100%', height: `${cropRect.top}px` },
-                {
-                  left: 0,
-                  top: `${cropRect.top}px`,
-                  width: `${cropRect.left}px`,
-                  height: `${cropRect.height}px`,
-                },
-                {
-                  left: `${cropRect.left + cropRect.width}px`,
-                  top: `${cropRect.top}px`,
-                  width: `${Math.max(0, stageSize.width - cropRect.left - cropRect.width)}px`,
-                  height: `${cropRect.height}px`,
-                },
-                {
-                  left: 0,
-                  top: `${cropRect.top + cropRect.height}px`,
-                  width: '100%',
-                  height: `${Math.max(0, stageSize.height - cropRect.top - cropRect.height)}px`,
-                },
-              ].map((pane, i) => (
-                <div key={`scrim-${i}`} className="pointer-events-none absolute bg-black/50" style={pane} />
-              ))}
+            {imageStatus === 'ready' && cropRect && (
+              <div className="pointer-events-none absolute inset-0 z-[6] overflow-hidden">
+                {[
+                  { left: 0, top: 0, width: '100%', height: `${cropRect.top}px` },
+                  {
+                    left: 0,
+                    top: `${cropRect.top}px`,
+                    width: `${cropRect.left}px`,
+                    height: `${cropRect.height}px`,
+                  },
+                  {
+                    left: `${cropRect.left + cropRect.width}px`,
+                    top: `${cropRect.top}px`,
+                    width: `${Math.max(0, stageSize.width - cropRect.left - cropRect.width)}px`,
+                    height: `${cropRect.height}px`,
+                  },
+                  {
+                    left: 0,
+                    top: `${cropRect.top + cropRect.height}px`,
+                    width: '100%',
+                    height: `${Math.max(0, stageSize.height - cropRect.top - cropRect.height)}px`,
+                  },
+                ].map((pane, i) => (
+                  <div key={`scrim-${i}`} className="absolute bg-black/50" style={pane} />
+                ))}
+              </div>
+            )}
 
             {/* The crop window itself */}
             {imageStatus === 'ready' && cropRect && (
@@ -486,9 +715,9 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
                   top: `${cropRect.top}px`,
                   width: `${cropRect.width}px`,
                   height: `${cropRect.height}px`,
-                  borderColor: isDragging ? 'rgb(252 211 77)' : 'rgba(244,244,245,0.9)',
-                  borderWidth: isDragging ? '2px' : '1.5px',
-                  boxShadow: isDragging
+                  borderColor: isInteracting ? 'rgb(252 211 77)' : 'rgba(244,244,245,0.9)',
+                  borderWidth: isInteracting ? '2px' : '1.5px',
+                  boxShadow: isInteracting
                     ? '0 0 0 1px rgba(0,0,0,0.5), 0 0 26px rgba(252,211,77,0.35)'
                     : '0 0 0 1px rgba(0,0,0,0.45)',
                 }}
@@ -519,7 +748,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
                 )}
 
                 {/* Rule of thirds inside the window */}
-                {(showGrid || isDragging) && (
+                {(showGrid || isInteracting) && (
                   <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3">
                     <div className="border-b border-r border-white/30" />
                     <div className="border-b border-r border-white/30" />
@@ -533,15 +762,57 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
                   </div>
                 )}
 
-                <span className="absolute left-1 top-1 rounded-sm bg-amber-400 px-1.5 py-px font-mono text-[9px] font-bold text-zinc-950">
+                <span className="absolute left-1/2 top-1 -translate-x-1/2 rounded-sm bg-amber-400 px-1.5 py-px font-mono text-[9px] font-bold whitespace-nowrap text-zinc-950">
                   {ratioLabel}
                 </span>
 
                 {isDragging && (
-                  <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] text-amber-200">
+                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap text-amber-200">
                     拖动中 · X {Math.round(cropState.offsetX)}% · Y {Math.round(cropState.offsetY)}%
                   </span>
                 )}
+
+                {resizeHandle && (
+                  <span className="absolute bottom-1 left-1/2 -translate-x-1/2 rounded bg-black/80 px-1.5 py-0.5 font-mono text-[10px] whitespace-nowrap text-amber-200">
+                    缩放中 · {activeZoom.toFixed(2)}x
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/*
+              Resize grips. They sit outside the window element (which clips its
+              contents) so a grip on a photo-flush edge stays fully clickable.
+            */}
+            {imageStatus === 'ready' && cropRect && (
+              <div
+                className="absolute z-20"
+                style={{
+                  left: `${cropRect.left}px`,
+                  top: `${cropRect.top}px`,
+                  width: `${cropRect.width}px`,
+                  height: `${cropRect.height}px`,
+                }}
+              >
+                {RESIZE_HANDLES.map((h) => (
+                  <div
+                    key={h.id}
+                    data-resize-handle={h.id}
+                    onMouseDown={(e) => beginResize(e, h.id)}
+                    onTouchStart={(e) => beginResize(e, h.id)}
+                    className={`absolute touch-none ${h.cursor}`}
+                    style={handleHitStyle(h.id)}
+                  >
+                    {CORNER_IDS.includes(h.id) && (
+                      <span
+                        className={`pointer-events-none absolute h-2 w-2 rounded-[2px] border border-zinc-950/80 transition-transform duration-150 ${
+                          resizeHandle === h.id ? 'scale-150 bg-amber-300' : 'bg-amber-400'
+                        }`}
+                        style={CORNER_DOT_STYLE[h.id]}
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
@@ -568,8 +839,11 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
           {/* Hint under the stage */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 font-mono text-[10px] text-zinc-500">
             <span className="flex items-center gap-1.5">
-              <Move className="h-3 w-3 text-amber-400/80" />
-              拖动可移动取景框 · 框外保留原图便于定位，只有框内区域会被导出
+              <Move className="h-3 w-3 shrink-0 text-amber-400/80" />
+              <span>
+                拖动移动取景框 · 拖四角或边框缩放
+                <span className="hidden sm:inline"> · 框外保留原图便于定位，只有框内区域会被导出</span>
+              </span>
             </span>
             <span className="hidden sm:inline">
               取景 {Math.round(srcW)} × {Math.round(srcH)} px · {activeZoom.toFixed(2)}x
