@@ -1,7 +1,6 @@
 import React from 'react';
 import { CropState } from '../types';
 import {
-  ZoomIn,
   RotateCw,
   FlipHorizontal,
   RotateCcw,
@@ -9,6 +8,9 @@ import {
   AlignVerticalJustifyStart,
   AlignVerticalJustifyEnd,
   Grid,
+  ArrowLeftRight,
+  ArrowUpDown,
+  Move,
 } from 'lucide-react';
 
 interface CropControlsProps {
@@ -20,6 +22,21 @@ interface CropControlsProps {
   isWideCrop: boolean;
 }
 
+/** A labelled sub-block inside the crop panel. */
+const Group: React.FC<{ title: string; hint?: string; children: React.ReactNode }> = ({
+  title,
+  hint,
+  children,
+}) => (
+  <div className="space-y-2">
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[11px] font-semibold tracking-wide text-zinc-300">{title}</span>
+      {hint && <span className="font-mono text-[10px] text-zinc-500">{hint}</span>}
+    </div>
+    {children}
+  </div>
+);
+
 export const CropControls: React.FC<CropControlsProps> = ({
   cropState,
   onChangeCrop,
@@ -28,127 +45,175 @@ export const CropControls: React.FC<CropControlsProps> = ({
   onResetCrop,
   isWideCrop,
 }) => {
+  const nudge = (axis: 'x' | 'y', delta: number) =>
+    onChangeCrop((prev) => ({
+      ...prev,
+      offsetX: axis === 'x' ? Math.max(-50, Math.min(50, prev.offsetX + delta)) : prev.offsetX,
+      offsetY: axis === 'y' ? Math.max(-50, Math.min(50, prev.offsetY + delta)) : prev.offsetY,
+    }));
+
+  const nudgeButton =
+    'flex h-8 flex-1 items-center justify-center rounded-md border border-zinc-800 bg-zinc-950/70 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer';
+
   return (
-    <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-3.5 space-y-3">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-medium text-zinc-300 flex items-center gap-1.5">
-          <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
-          <span>裁切微调与构图位置</span>
-        </span>
-        <div className="flex items-center gap-2">
+    <div className="space-y-4">
+      {/* Composition nudging — arrow pad mirrors the on-canvas drag */}
+      <Group
+        title="构图定位"
+        hint={`偏移 X ${Math.round(cropState.offsetX)}% · Y ${Math.round(cropState.offsetY)}%`}
+      >
+        <div className="flex items-stretch gap-2">
+          <div className="flex flex-1 flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={() => nudge('y', -6)}
+              className={nudgeButton}
+              title="画面上移 6%"
+              aria-label="画面上移"
+            >
+              <ArrowUpDown className="h-3.5 w-3.5 rotate-180" />
+            </button>
+            <div className="flex w-full gap-1">
+              <button
+                type="button"
+                onClick={() => nudge('x', -6)}
+                className={nudgeButton}
+                title="画面左移 6%"
+                aria-label="画面左移"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onChangeCrop((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }))}
+                className="flex h-8 flex-1 items-center justify-center rounded-md border border-amber-400/30 bg-amber-400/10 text-amber-300 transition-colors hover:bg-amber-400/20 cursor-pointer"
+                title="回到正中央"
+                aria-label="回到正中央"
+              >
+                <Move className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => nudge('x', 6)}
+                className={nudgeButton}
+                title="画面右移 6%"
+                aria-label="画面右移"
+              >
+                <ArrowLeftRight className="h-3.5 w-3.5 rotate-180" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => nudge('y', 6)}
+              className={nudgeButton}
+              title="画面下移 6%"
+              aria-label="画面下移"
+            >
+              <ArrowUpDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="flex w-[46%] flex-col gap-1.5">
+            <button
+              type="button"
+              onClick={() =>
+                onChangeCrop((prev) => ({
+                  ...prev,
+                  offsetY: isWideCrop ? -45 : 0,
+                  offsetX: isWideCrop ? prev.offsetX : -45,
+                }))
+              }
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/70 px-2 text-[11px] font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer"
+            >
+              <AlignVerticalJustifyStart className="h-3 w-3" />
+              {isWideCrop ? '贴顶部取景' : '贴左侧取景'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeCrop((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }))}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/70 px-2 text-[11px] font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer"
+            >
+              <AlignVerticalJustifyCenter className="h-3 w-3" />
+              精准居中
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onChangeCrop((prev) => ({
+                  ...prev,
+                  offsetY: isWideCrop ? 45 : 0,
+                  offsetX: isWideCrop ? prev.offsetX : 45,
+                }))
+              }
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-950/70 px-2 text-[11px] font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer"
+            >
+              <AlignVerticalJustifyEnd className="h-3 w-3" />
+              {isWideCrop ? '贴底部取景' : '贴右侧取景'}
+            </button>
+          </div>
+        </div>
+      </Group>
+
+      {/* Rotation & mirror */}
+      <Group title="旋转与镜像" hint={`${cropState.rotation}°${cropState.flipH ? ' · 已镜像' : ''}`}>
+        <div className="grid grid-cols-3 gap-1.5">
           <button
-            onClick={() => setShowGrid((prev) => !prev)}
-            className={`px-2 py-1 rounded text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer ${
-              showGrid
-                ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
-                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-zinc-700/50'
+            type="button"
+            onClick={() => onChangeCrop((prev) => ({ ...prev, rotation: (prev.rotation + 90) % 360 }))}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950/70 px-2 py-2 text-[11px] font-medium text-zinc-300 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer"
+            title="顺时针旋转 90°"
+          >
+            <RotateCw className="h-3.5 w-3.5" />
+            顺时针
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeCrop((prev) => ({ ...prev, rotation: (prev.rotation + 270) % 360 }))}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950/70 px-2 py-2 text-[11px] font-medium text-zinc-300 transition-colors hover:border-zinc-700 hover:text-white cursor-pointer"
+            title="逆时针旋转 90°"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            逆时针
+          </button>
+          <button
+            type="button"
+            onClick={() => onChangeCrop((prev) => ({ ...prev, flipH: !prev.flipH }))}
+            className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[11px] font-medium transition-colors cursor-pointer ${
+              cropState.flipH
+                ? 'border-amber-400/50 bg-amber-400/15 text-amber-300'
+                : 'border-zinc-800 bg-zinc-950/70 text-zinc-300 hover:border-zinc-700 hover:text-white'
             }`}
-            title="显示九宫格构图辅助线"
+            title="水平镜像翻转"
           >
-            <Grid className="w-3 h-3" />
-            <span>九宫格参考线</span>
-          </button>
-          <button
-            onClick={onResetCrop}
-            className="text-[11px] text-zinc-400 hover:text-zinc-200 underline cursor-pointer"
-          >
-            重置居中
+            <FlipHorizontal className="h-3.5 w-3.5" />
+            镜像
           </button>
         </div>
-      </div>
+      </Group>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-        {/* Quick Panorama Slice Alignment (Crucial for XPan!) */}
-        <div className="space-y-1.5">
-          <label className="text-[11px] text-zinc-400 flex items-center justify-between">
-            <span>{isWideCrop ? '上下景深取景定位' : '左右取景定位'}</span>
-            <span className="text-[10px] text-amber-400 font-mono">
-              {isWideCrop ? (cropState.offsetY < -15 ? '偏上取景' : cropState.offsetY > 15 ? '偏下取景' : '中间居中') : '快速定位'}
-            </span>
-          </label>
-          <div className="flex items-center gap-1 p-0.5 bg-zinc-950/80 rounded-lg border border-zinc-800">
-            <button
-              onClick={() => onChangeCrop((prev) => ({ ...prev, offsetY: isWideCrop ? -45 : prev.offsetY, offsetX: !isWideCrop ? -45 : prev.offsetX }))}
-              className="flex-1 py-1 px-2 text-[11px] font-medium rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-              title={isWideCrop ? '取画面偏上部分' : '取画面偏左'}
-            >
-              <AlignVerticalJustifyStart className="w-3 h-3" />
-              <span>{isWideCrop ? '顶部' : '偏左'}</span>
-            </button>
-            <button
-              onClick={() => onChangeCrop((prev) => ({ ...prev, offsetY: 0, offsetX: 0 }))}
-              className="flex-1 py-1 px-2 text-[11px] font-medium rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-              title="水平垂直正中"
-            >
-              <AlignVerticalJustifyCenter className="w-3 h-3" />
-              <span>居中</span>
-            </button>
-            <button
-              onClick={() => onChangeCrop((prev) => ({ ...prev, offsetY: isWideCrop ? 45 : prev.offsetY, offsetX: !isWideCrop ? 45 : prev.offsetX }))}
-              className="flex-1 py-1 px-2 text-[11px] font-medium rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors flex items-center justify-center gap-1 cursor-pointer"
-              title={isWideCrop ? '取画面偏下部分' : '取画面偏右'}
-            >
-              <AlignVerticalJustifyEnd className="w-3 h-3" />
-              <span>{isWideCrop ? '底部' : '偏右'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Zoom Slider */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-zinc-400">
-            <span>缩放取景倍率</span>
-            <span className="font-mono text-zinc-300">{cropState.zoom.toFixed(2)}x</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min="1.0"
-              max="2.5"
-              step="0.02"
-              value={cropState.zoom}
-              onChange={(e) => {
-                const z = parseFloat(e.target.value);
-                onChangeCrop((prev) => ({ ...prev, zoom: z }));
-              }}
-              className="w-full accent-amber-400 cursor-pointer h-1.5 bg-zinc-800 rounded-lg appearance-none"
-            />
-          </div>
-        </div>
-
-        {/* Rotation & Flip */}
-        <div className="space-y-1.5">
-          <label className="text-[11px] text-zinc-400">画面旋转与镜像</label>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => onChangeCrop((prev) => ({ ...prev, rotation: (prev.rotation + 90) % 360 }))}
-              className="flex-1 py-1 px-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer"
-              title="顺时针旋转90度"
-            >
-              <RotateCw className="w-3 h-3" />
-              <span>旋转90°</span>
-            </button>
-            <button
-              onClick={() => onChangeCrop((prev) => ({ ...prev, flipH: !prev.flipH }))}
-              className={`flex-1 py-1 px-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer ${
-                cropState.flipH
-                  ? 'bg-amber-400 text-zinc-950 font-semibold'
-                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white'
-              }`}
-              title="水平镜像翻转"
-            >
-              <FlipHorizontal className="w-3 h-3" />
-              <span>水平镜像</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="text-[11px] text-zinc-500 flex items-center justify-between">
-        <span>💡 提示：您可直接在上方预览图中<b>按住鼠标拖拽</b>自由微调构图区域</span>
-        <span className="font-mono text-zinc-400">
-          偏移: X {Math.round(cropState.offsetX)}% · Y {Math.round(cropState.offsetY)}%
-        </span>
+      {/* Guides & reset */}
+      <div className="flex items-center gap-2 border-t border-zinc-800/80 pt-3">
+        <button
+          type="button"
+          onClick={() => setShowGrid((prev) => !prev)}
+          className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors cursor-pointer ${
+            showGrid
+              ? 'border-amber-400/40 bg-amber-400/15 text-amber-300'
+              : 'border-zinc-800 bg-zinc-950/70 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'
+          }`}
+          title="显示九宫格构图辅助线 (快捷键 G)"
+        >
+          <Grid className="h-3 w-3" />
+          九宫格参考线
+        </button>
+        <button
+          type="button"
+          onClick={onResetCrop}
+          className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200 cursor-pointer"
+        >
+          <RotateCcw className="h-3 w-3" />
+          全部重置
+        </button>
       </div>
     </div>
   );

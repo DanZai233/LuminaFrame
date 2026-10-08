@@ -1,10 +1,13 @@
 import { PhotoMetadata } from '../types';
+import { SAMPLE_IMAGE_URLS, SAMPLE_IMAGE_THUMBS } from '../assets/images';
 
 export interface SamplePhoto {
   id: string;
   name: string;
   category: string;
   url: string;
+  /** Smaller preview used by the thumbnail rail. Falls back to `url`. */
+  thumbUrl: string;
   defaultRatio: string;
   defaultStyle: string;
   metadata: PhotoMetadata;
@@ -16,7 +19,8 @@ export const SAMPLE_PHOTOS: SamplePhoto[] = [
     id: 'xpan-shinjuku',
     name: '新宿雨夜 · 宽幅街头',
     category: 'XPAN 65:24 宽幅',
-    url: '/src/assets/images/sample_xpan_street_1791190366054.jpg',
+    url: SAMPLE_IMAGE_URLS.xpanStreet,
+    thumbUrl: SAMPLE_IMAGE_THUMBS.xpanStreet,
     defaultRatio: 'xpan-65-24',
     defaultStyle: 'xpan-film',
     brandId: 'hasselblad',
@@ -40,7 +44,8 @@ export const SAMPLE_PHOTOS: SamplePhoto[] = [
     id: 'mist-mountain',
     name: '晨雾雪脊 · 纯粹自然',
     category: '风光中画幅',
-    url: '/src/assets/images/sample_mountain_mist_1791190375650.jpg',
+    url: SAMPLE_IMAGE_URLS.mountainMist,
+    thumbUrl: SAMPLE_IMAGE_THUMBS.mountainMist,
     defaultRatio: '16-9',
     defaultStyle: 'classic-gallery',
     brandId: 'hasselblad',
@@ -64,7 +69,8 @@ export const SAMPLE_PHOTOS: SamplePhoto[] = [
     id: 'vintage-cafe',
     name: '午后咖啡 · 胶片记忆',
     category: '人文静物',
-    url: '/src/assets/images/sample_vintage_cafe_1791190384888.jpg',
+    url: SAMPLE_IMAGE_URLS.vintageCafe,
+    thumbUrl: SAMPLE_IMAGE_THUMBS.vintageCafe,
     defaultRatio: '3-2',
     defaultStyle: 'leica-card',
     brandId: 'leica',
@@ -88,7 +94,8 @@ export const SAMPLE_PHOTOS: SamplePhoto[] = [
     id: 'urban-brutalism',
     name: '几何秩序 · 建筑光影',
     category: '现代建筑',
-    url: '/src/assets/images/sample_urban_architecture_1791190393766.jpg',
+    url: SAMPLE_IMAGE_URLS.urbanArchitecture,
+    thumbUrl: SAMPLE_IMAGE_THUMBS.urbanArchitecture,
     defaultRatio: '4-3',
     defaultStyle: 'darkroom-matte',
     brandId: 'fujifilm',

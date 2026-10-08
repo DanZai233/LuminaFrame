@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { ImageOff } from 'lucide-react';
 import { CropState, FrameConfig, PhotoMetadata } from '../types';
 import { BrandLogo } from '../utils/brandLogos';
 import { ColorPaletteBar } from './ColorPaletteBar';
@@ -29,6 +30,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const dragStartRef = useRef<{ startX: number; startY: number; initialOffsetX: number; initialOffsetY: number }>({
     startX: 0,
     startY: 0,
@@ -38,12 +40,23 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
 
   const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number }>({ width: 1, height: 1 });
 
+  // Reset the loading state whenever the underlying photo changes so the
+  // skeleton is shown again instead of a stale frame.
+  useEffect(() => {
+    setImageStatus('loading');
+  }, [imageSrc]);
+
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
     setImgNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+    setImageStatus('ready');
     if (onImageLoaded) {
       onImageLoaded(img);
     }
+  };
+
+  const handleImageError = () => {
+    setImageStatus('error');
   };
 
   // Determine active aspect ratio
@@ -73,28 +86,32 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
   };
 
   useEffect(() => {
+    // Translate viewport pixels into offset percent relative to the crop
+    // window, so a drag feels the same on a phone and on a 4K monitor.
+    const offsetFromDelta = (clientX: number, clientY: number) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const width = rect?.width || 800;
+      const height = rect?.height || 600;
+      const dx = clientX - dragStartRef.current.startX;
+      const dy = clientY - dragStartRef.current.startY;
+      const nextX = dragStartRef.current.initialOffsetX - (dx / width) * 100 * cropState.zoom;
+      const nextY = dragStartRef.current.initialOffsetY - (dy / height) * 100 * cropState.zoom;
+      return {
+        x: Math.max(-50, Math.min(50, nextX)),
+        y: Math.max(-50, Math.min(50, nextY)),
+      };
+    };
+
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
-      const dx = e.clientX - dragStartRef.current.startX;
-      const dy = e.clientY - dragStartRef.current.startY;
-      const sensitivity = 0.25;
-
-      const newOffsetX = Math.max(-50, Math.min(50, dragStartRef.current.initialOffsetX - dx * sensitivity));
-      const newOffsetY = Math.max(-50, Math.min(50, dragStartRef.current.initialOffsetY - dy * sensitivity));
-
-      onUpdateOffset(newOffsetX, newOffsetY);
+      const next = offsetFromDelta(e.clientX, e.clientY);
+      onUpdateOffset(next.x, next.y);
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (!isDragging || e.touches.length !== 1) return;
-      const dx = e.touches[0].clientX - dragStartRef.current.startX;
-      const dy = e.touches[0].clientY - dragStartRef.current.startY;
-      const sensitivity = 0.25;
-
-      const newOffsetX = Math.max(-50, Math.min(50, dragStartRef.current.initialOffsetX - dx * sensitivity));
-      const newOffsetY = Math.max(-50, Math.min(50, dragStartRef.current.initialOffsetY - dy * sensitivity));
-
-      onUpdateOffset(newOffsetX, newOffsetY);
+      const next = offsetFromDelta(e.touches[0].clientX, e.touches[0].clientY);
+      onUpdateOffset(next.x, next.y);
     };
 
     const handleMouseUp = () => {
@@ -104,7 +121,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
     if (isDragging) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
-      window.addEventListener('touchmove', handleTouchMove);
+      window.addEventListener('touchmove', handleTouchMove, { passive: true });
       window.addEventListener('touchend', handleMouseUp);
     }
 
@@ -114,7 +131,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleMouseUp);
     };
-  }, [isDragging, onUpdateOffset]);
+  }, [isDragging, onUpdateOffset, cropState.zoom]);
 
   const isLight =
     frameConfig.frameColor === '#ffffff' ||
@@ -160,14 +177,15 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
       : padTop;
 
   return (
-    <div className="relative w-full flex items-center justify-center p-3 sm:p-6 lg:p-8 bg-[#07080a] min-h-[380px] sm:min-h-[500px] rounded-2xl border border-zinc-800/80 shadow-2xl overflow-hidden select-none">
-      {/* Background Studio Light Falloff */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(38,38,38,0.25)_0%,transparent_70%)] pointer-events-none" />
-
+    <div className="flex w-full min-w-0 items-center justify-center overflow-hidden py-1 select-none">
       {/* Frame Container */}
       <div
+        className="relative flex w-full min-w-0 max-w-full flex-col items-center"
+        style={{ width: 'min(100%, var(--frame-max-w, 100%))' }}
+      >
+      <div
         ref={containerRef}
-        className="relative max-w-full transition-all duration-200 ease-out shadow-2xl"
+        className="relative w-full min-w-0 max-w-full transition-[padding,border-radius] duration-200 ease-out shadow-2xl shadow-black/60"
         style={{
           backgroundColor: frameConfig.frameColor,
           paddingTop: padTop,
@@ -217,7 +235,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
           }`}
           style={{
             aspectRatio: `${targetRatio}`,
-            maxHeight: '68vh',
+            maxHeight: 'var(--preview-max-h, 60vh)',
             maxWidth: '100%',
           }}
         >
@@ -225,10 +243,13 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
           <img
             ref={imageRef}
             src={imageSrc}
-            alt="Preview"
+            alt={metadata.model ? `${metadata.make} ${metadata.model} preview` : 'Preview'}
             onLoad={handleImageLoad}
+            onError={handleImageError}
             draggable={false}
-            className="w-full h-full object-cover transition-transform duration-75 pointer-events-none"
+            className={`absolute inset-0 h-full w-full max-w-none object-cover transition-transform duration-75 pointer-events-none ${
+              imageStatus === 'ready' ? 'opacity-100' : 'opacity-0'
+            }`}
             style={{
               transform: `scale(${scale}) translate(${translateX}%, ${translateY}%) rotate(${cropState.rotation}deg) scaleX(${
                 cropState.flipH ? -1 : 1
@@ -237,6 +258,24 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
             }}
           />
 
+          {/* Loading Skeleton */}
+          {imageStatus === 'loading' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900">
+              <div className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-amber-400 animate-spin" />
+              <span className="text-[11px] text-zinc-500 font-mono">正在载入照片…</span>
+            </div>
+          )}
+
+          {/* Image Load Failure */}
+          {imageStatus === 'error' && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900 px-6 text-center">
+              <ImageOff className="w-6 h-6 text-rose-400" />
+              <span className="text-xs text-zinc-300 font-medium">照片载入失败</span>
+              <span className="text-[11px] text-zinc-500 max-w-xs leading-relaxed">
+                请确认图片链接可访问，或点击顶部「上传照片」改用本地文件。
+              </span>
+            </div>
+          )}
           {/* Film Grain Texture Overlay */}
           {filmGrain !== undefined && filmGrain > 0 && (
             <div
@@ -442,6 +481,7 @@ export const FramePreview: React.FC<FramePreviewProps> = ({
             </span>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
