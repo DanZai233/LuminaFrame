@@ -276,9 +276,12 @@ function drawXpanFilmDetails(
     ctx.fillText(title, photoX, botTextY);
 
     if (meta.lens) {
+      // Measure the title with the title's own font: switching the font first
+      // made the lens text overlap the model name.
+      const titleWidth = ctx.measureText(title).width;
       ctx.fillStyle = '#9ca3af';
       ctx.font = `400 ${10.5 * scale}px 'Plus Jakarta Sans', sans-serif`;
-      ctx.fillText(` · ${meta.lens}`, photoX + ctx.measureText(title).width + 6 * scale, botTextY);
+      ctx.fillText(` · ${meta.lens}`, photoX + titleWidth + 6 * scale, botTextY);
     }
 
     // Right: Exposure parameters in vintage golden text
@@ -341,9 +344,10 @@ function drawStandardMetadata(
     ctx.fillText(cam, leicaOffset, dotY + 4 * scale);
 
     if (meta.lens) {
+      const camWidth = ctx.measureText(cam).width;
       ctx.fillStyle = subColor;
       ctx.font = `400 ${10.5 * scale}px 'Plus Jakarta Sans', sans-serif`;
-      ctx.fillText(` · ${meta.lens}`, leicaOffset + ctx.measureText(cam).width + 6 * scale, dotY + 4 * scale);
+      ctx.fillText(` · ${meta.lens}`, leicaOffset + camWidth + 6 * scale, dotY + 4 * scale);
     }
 
     // Right: Exposure triangle
